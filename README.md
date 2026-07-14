@@ -1,172 +1,57 @@
-```
-______   __     ______   ______     ______     __         __    
-/\  ___\ /\ \   /\  ___\ /\  __ \   /\  ___\   /\ \       /\ \   
-\ \  __\ \ \ \  \ \  __\ \ \  __ \  \ \ \____  \ \ \____  \ \ \  
-\ \_\    \ \_\  \ \_\    \ \_\ \_\  \ \_____\  \ \_____\  \ \_\ 
- \/_/     \/_/   \/_/     \/_/\/_/   \/_____/   \/_____/   \/_/ 
-                                                                
-```
+# cinecli
 
-# fifacli — 2026 FIFA World Cup CLI Streamer
-
-Watch World Cup matches from your terminal. Automatically discovers free streams and launches `mpv` — no browser needed.
-
-## Features
-
-- Auto-detects the current live match from the schedule
-- Scrapes streaming sites with a headless browser to find the `.m3u8` URL
-- Falls back to official free broadcasters (CazeTV, BFM, ZDF, RTVE)
-- Proxy support for geo-unblocking
+Search, stream, and download movies from the terminal. Scrapes YTS for magnet links and plays them via `webtorrent` + `mpv` with zero configuration.
 
 ## Dependencies
 
-### Required
-
-| Tool | Purpose |
-|---|---|
-| **mpv** | Video player |
-| **fzf** | Fuzzy-finder menu |
-| **yt-dlp** | Stream extraction for official channels |
+- `curl` — HTTP requests
+- `fzf` — interactive selection UI
+- `webtorrent-cli` — BitTorrent streaming engine
+- `mpv` — media player
 
 ```bash
-# Linux (Arch)
-sudo pacman -S mpv fzf yt-dlp
+# Arch
+sudo pacman -S curl fzf mpv && npm install -g webtorrent-cli
 
-# Linux (Debian/Ubuntu)
-sudo apt install mpv fzf yt-dlp
+# Ubuntu/Debian
+sudo apt install curl fzf mpv && npm install -g webtorrent-cli
 
-# macOS (Homebrew)
-brew install mpv fzf yt-dlp
-
-# Windows (scoop)
-scoop install mpv fzf yt-dlp
+# macOS
+brew install curl fzf mpv && npm install -g webtorrent-cli
 ```
-
-### Optional
-
-| Tool | Purpose |
-|---|---|
-| **streamlink** | Fallback stream extractor |
-| **Python 3.14+** | Required for the auto-scraper |
-| **Playwright** | Headless browser engine (installed automatically) |
-
-## Installation
-
-### Linux / macOS
-
-```bash
-# Clone the repo
-git clone https://github.com/yourusername/wc-cli.git
-cd wc-cli
-
-# Make it executable
-chmod +x fifacli
-
-# Set up the Python scraper (one-time)
-python3 -m venv scrapers/venv
-scrapers/venv/bin/pip install playwright
-scrapers/venv/bin/playwright install chromium
-
-# Run it
-./fifacli
-```
-
-### Windows (PowerShell)
-
-```powershell
-# Clone the repo
-git clone https://github.com/yourusername/wc-cli.git
-cd wc-cli
-
-# Set up the Python scraper (one-time)
-python -m venv scrapers\venv
-scrapers\venv\Scripts\pip install playwright
-scrapers\venv\Scripts\playwright install chromium
-
-# Run it with Git Bash or WSL
-.\fifacli
-```
-
-> **Note:** On Windows, run from Git Bash, WSL, or Cygwin — Bash is required.
 
 ## Usage
 
+```
+./cinecli <search query>
+```
+
+Three sequential prompts:
+
+1. **Pick a movie** — results from YTS shown as `Title   Year`
+2. **Pick quality** — 720p, 1080p, 2160p depending on availability
+3. **Pick action** — stream (instant playback) or download to `~/Downloads/`
+
+Press `Esc` at any prompt to cancel.
+
+### Examples
+
 ```bash
-./fifacli
-```
-
-### Menu
-
-1. Select a channel:
-   - **Português (CazeTV)** — YouTube live
-   - **Français (BFM)** — French stream
-   - **Deutsch (ZDF)** — German stream
-   - **Español (RTVE)** — Spanish stream
-   - **Stream (scrape)** — Auto-discover from trickscorner (see below)
-2. The match plays in `mpv`
-3. Press Enter to return to the menu
-
-### Auto-scrape mode
-
-Select **Stream (scrape)** and it will:
-
-1. Detect the current live match from the built-in schedule
-2. Visit `trickscorner.xyz` with a headless Chromium
-3. Scrape all match links from the page
-4. Match the live match name against the links (fuzzy)
-5. Follow the player redirect chain
-6. Extract the raw `.m3u8` CDN URL
-7. Play it in `mpv`
-
-If no match is live, it prompts for a match name manually.
-
-### Proxy / VPN
-
-Set a proxy in `~/.config/wc-cli/config`:
-
-```
-HTTP_PROXY=socks5://127.0.0.1:1080
-```
-
-### Change the streaming site
-
-Edit `~/.config/wc-cli/config`:
-
-```
-SCRAPE_BASE_URL=https://www.trickscorner.xyz
+./cinecli "Interstellar"
+./cinecli "the dark knight 2008"
+./cinecli "parasite"
 ```
 
 ## How it works
 
 ```
-┌──────────┐     ┌──────────────────┐     ┌─────────────────┐     ┌─────┐
-│  fifacli │───▶ │  Playwright      │───▶ │  Streaming CDN │────▶│ mpv │
-│  (bash)  │     │  headless Chrome │     │  .m3u8 stream   │     │     │
-└──────────┘     └──────────────────┘     └─────────────────┘     └─────┘
-       │                    │
-       │ find_matches()     │ discover_matches()
-       │ from schedule      │ + extract_stream()
-       ▼                    ▼
-  "Portugal vs          trickscorner.xyz
-   Congo DR"            → /2026/06/...portugal-vs-dr-congo.html
-                        → playerdpku.blogspot.com?id=...
-                        → cloudfront.net/...chunklist.m3u8
+search query  →  yts.mx/browse-movies  →  fzf selects movie
+                movie page             →  fzf selects quality/magnet
+                magnet                 →  webtorrent --mpv --sequential
 ```
 
-The scraper uses Playwright (headless Chromium) to:
+The `--sequential` flag forces piece-by-piece downloading so `mpv` starts playing within seconds rather than waiting for the full file.
 
-1. **Discover** — visit the base URL, find all match links
-2. **Match** — fuzzy-match the schedule entry to the correct link
-3. **Extract** — intercept network requests for `.m3u8` / `.mpd` files
-4. **Follow** — if a player wrapper page is found, navigate into it
-5. **Play** — return the direct CDN `.m3u8` URL to `mpv`
+## No tracking
 
-## Files
-
-| File | Purpose |
-|---|---|
-| `fifacli` | Main script (Bash) |
-| `scrapers/extract_stream.py` | Playwright-based stream extractor |
-| `scrapers/requirements.txt` | Python dependencies |
-| `scrapers/venv/` | Python virtual environment (gitignored) |
-| `~/.config/wc-cli/config` | User configuration |
+The script is entirely stateless — no logs, no cookies, no API keys. The only network requests are to YTS and the BitTorrent swarm.
