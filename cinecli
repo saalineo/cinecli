@@ -1,97 +1,302 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="https://yts.mx"
-OUTDIR="$HOME/Downloads"
+DOH="--doh-url https://cloudflare-dns.com/dns-query"
+ECH=""
+# curl 8.8+ supports --ech for encrypted SNI
+curl --ech-grease 2>/dev/null && ECH="--ech-grease" || true
+
+CURL="curl -sLf ${DOH} ${ECH} --connect-timeout 10 --max-time 25 \
+  -A 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0'"
+
+# Mirror lists — tried in order per source, first one that responds wins
+
+YTS_MIRRORS=(
+  yts.mx yts.rs yts.lt yts.am yts.ag
+  yts.unblocked.casa yts.unblocked.win yts.unblocked.bar
+  yts.unblocked.rest yts.unblocked.love yts.unblocked.pet
+  yts.unblocked.id yts.unblocked.pro
+)
+
+X1337_MIRRORS=(
+  1337xx.to 1337x.to 1337x.st 1337x.is
+  x1337x.ws x1337x.eu x1337x.se
+  1337x.unblocked.casa 1337x.unblocked.win
+  1337x.unblocked.bar 1337x.unblocked.id 1337x.unblocked.pro
+)
+
+TPB_MIRRORS=(
+  thepiratebay.org piratebay.live thepiratebay.unblocked.casa tpb.party
+  pirateproxy.live piratebayproxy.info tpb.proxy.com thepiratebay.zone
+  piratebay.pro thehiddenbay.com piratebay.work
+)
+
+# these resolve independently from thepiratebay.* and aren't Cloudflare-gated
+TPB_API_MIRRORS=(apibay.org)
+
+RARBG_MIRRORS=(
+  rarbg.to rarbgproxy.org rarbg.unblocked.casa rarbg.unblocked.win
+  rarbg.unblocked.bar rarbg.unblocked.id rarbg.unblocked.pro
+  rarbgproxy.to rarbgget.org rarbgmirror.com
+)
+
+TGX_MIRRORS=(
+  torrentgalaxy.to torrentgalaxy.mx torrentgalaxy.unblocked.casa
+  torrentgalaxy.unblocked.win torrentgalaxy.unblocked.bar torrentgalaxy.proxy tgx.rs
+)
+
+EZTV_MIRRORS=(eztv.re eztv.it eztv.wf eztv.tf)
+LIMETORRENT_MIRRORS=(limetorrents.info limetorrents.pro limetorrents.lol limetorrents.cc)
+ZOOQLE_MIRRORS=(zooqle.com zooqle.nl)
+BT4G_MIRRORS=(bt4g.org bt4gprx.com)
+BITSEARCH_MIRRORS=(bitsearch.to bitsearch.pro)
+IDOPE_MIRRORS=(idope.se idope.clone)
+SOLIDTORRENT_MIRRORS=(solidtorrents.to solidtorrents.net)
+TORREND_MIRRORS=(torrends.to)
+NYAA_MIRRORS=(nyaa.si)
+
+# mix of UDP, HTTPS, and WebSocket trackers for firewall compatibility
+TRACKERS="&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://tracker.coppersurfer.tk:6969/announce&tr=https://tracker.bitsearch.to:443/announce&tr=https://tr.ready123.xyz:443/announce&tr=udp://tracker.torrent.eu.org:451/announce&tr=udp://open.tracker.cl:1337/announce&tr=wss://tracker.bitsearch.to:443/announce&tr=wss://tracker.openwebtorrent.com:443/announce"
+
+CACHE_FILE=""
 
 check_deps() {
-  for cmd in curl fzf webtorrent mpv; do
-    if ! command -v "$cmd" &>/dev/null; then
-      echo "missing: $cmd" >&2
-      exit 1
-    fi
+  for cmd in curl fzf mpv; do
+    command -v "$cmd" &>/dev/null || { echo "missing: $cmd" >&2; exit 1; }
   done
+  if ! command -v webtorrent &>/dev/null && ! command -v peerflix &>/dev/null; then
+    echo "need webtorrent or peerflix (npm install -g webtorrent-cli)" >&2
+    echo "  or: npm install -g peerflix" >&2
+    exit 1
+  fi
 }
 
-encode() {
-  local s="$1" i c
-  for ((i=0; i<${#s}; i++)); do
-    c="${s:i:1}"
-    case "$c" in
-      [a-zA-Z0-9.~_-]) printf '%s' "$c" ;;
-      ' ') printf '+' ;;
-      *) printf '%%%02X' "'$c" ;;
-    esac
+fetch_page() { eval "$CURL" "$@"; }
+
+# TPB API — returns JSON, no Cloudflare, works through Airtel with DoH
+tpb_api_search() {
+  local q=$1 api_domain=$2
+  safe_q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$q'''))" 2>/dev/null || echo "$q")
+  json=$(fetch_page "https://${api_domain}/q.php?q=${safe_q}&cat=0" 2>/dev/null) || return 1
+  echo "$json" | grep -q '"name":"No results returned"' && return 1
+
+  CACHE_FILE="/tmp/cinecli_${$}_cache.txt"
+  echo "$json" | python3 -c "
+import sys, json, re
+data = json.load(sys.stdin)
+lines = []
+movie_cats = {'201','202','203','204','207','209','210','211'}
+for r in data:
+    cat = r.get('category', '0')
+    if cat not in movie_cats: continue
+    name = r.get('name', '')
+    if re.search(r'\\bS\\d{2}E\\d{2}\\b', name, re.I): continue
+    h = r.get('info_hash', '')
+    s = r.get('seeders', '0')
+    sz = r.get('size', '0')
+    imdb = r.get('imdb', '')
+    ym = re.search(r'\\b((?:19|20)\\d{2})\\b', name)
+    year = ym.group(1) if ym else '0'
+    qm = re.search(r'\\b(2160|1080|720|480)[pP]', name)
+    qual = qm.group(0).lower() if qm else ''
+    if not qual:
+        qm = re.search(r'\\b4[kK]\\b', name)
+        qual = qm.group(0).lower() if qm else 'unknown'
+    if imdb and imdb.startswith('tt'):
+        group = imdb
+    else:
+        slug = re.sub(r'\\b(?:19|20)\\d{2}\\b.*', '', name)
+        slug = re.sub(r'[^a-zA-Z0-9]', '', slug).lower()[:30]
+        group = slug
+    lines.append(f'{group}|{year}|{qual}|{h}|{s}|{sz}|{name}|{name}|{imdb}')
+with open('${CACHE_FILE}', 'w') as f:
+    f.write('\\n'.join(lines))
+" 2>/dev/null
+
+  [[ ! -s "$CACHE_FILE" ]] && { rm -f "$CACHE_FILE"; CACHE_FILE=""; return 1; }
+
+  python3 << PYEOF 2>/dev/null
+import sys, re
+from collections import defaultdict
+
+cache = open("${CACHE_FILE}").read().splitlines()
+groups = defaultdict(list)
+for line in cache:
+    parts = line.split('|')
+    if len(parts) < 9: continue
+    groups[parts[0]].append(parts)
+
+seen = set()
+for gid in sorted(groups):
+    entries = groups[gid]
+    best = max(entries, key=lambda e: int(e[4]) if e[4].isdigit() else 0)
+    group_key = gid + '|' + best[1]
+    if group_key in seen: continue
+    seen.add(group_key)
+    raw = best[7]
+    display = re.sub(r'\s*[\(\[].*?(?:19|20)\d{2}.*?[\)\]]\s*', ' ', raw)
+    display = re.sub(r'\b(?:19|20)\d{2}\b.*', '', display)
+    display = re.sub(r'\s*[-–—]+\s*', ' ', display)
+    display = re.sub(r'\s+', ' ', display).strip()
+    print(display + '\t' + best[1] + '\ttpb\t' + group_key)
+PYEOF
+}
+
+# TODO: merge with tpb_api_search — they share a lot of dedup logic
+tpb_api_magnets() {
+  local group_key=$1
+  [[ -z "$CACHE_FILE" || ! -f "$CACHE_FILE" ]] && return 1
+  CACHE_FILE="$CACHE_FILE" GROUP_KEY="$group_key" python3 << PYEOF 2>/dev/null
+import sys, os, urllib.parse
+
+cache = open(os.environ['CACHE_FILE']).read().splitlines()
+target = os.environ['GROUP_KEY']
+trackers = "${TRACKERS}"
+for line in cache:
+    parts = line.split('|')
+    if len(parts) < 9: continue
+    gid, year, qual = parts[0], parts[1], parts[2]
+    h, s, sz = parts[3], parts[4], parts[5]
+    name = parts[7]
+    key = gid + '|' + year
+    if key == target:
+        magnet = 'magnet:?xt=urn:btih:' + h + '&dn=' + urllib.parse.quote(name) + trackers
+        print(qual + '  ' + s + ' seed' + '\t' + magnet)
+PYEOF
+}
+
+# 1337x scraper — 1337xx.to works without Cloudflare
+x1337_search() {
+  local q=$1 mirror slug title seeders year qual
+  q=$(echo "$q" | sed 's/ /-/g')
+  for mirror in "${X1337_MIRRORS[@]}"; do
+    local html
+    html=$(fetch_page "https://${mirror}/search/${q}/1/" 2>/dev/null) || continue
+    echo "$html" | grep -q 'coll-2 seeds' || continue
+    CACHE_FILE="/tmp/cinecli_${$}_cache.txt"
+    : > "$CACHE_FILE"
+    echo "$html" | grep -oP '<tr>.*?</tr>' | while IFS= read -r row; do
+      slug=$(echo "$row" | grep -oP 'href="\K(/torrent/[^"]+)' | head -1)
+      title=$(echo "$row" | grep -oP 'href="/torrent/[^"]+">\K[^<]+' | head -1)
+      seeders=$(echo "$row" | grep -oP '<td class="coll-2 seeds">\K[^<]+')
+      [[ -z "$title" || -z "$slug" ]] && continue
+      year=$(echo "$title" | grep -oP '\b(19|20)\d{2}\b' | head -1)
+      qual=$(echo "$title" | grep -oP '\b(2160|1080|720|480)[pPkK]' | head -1)
+      qual="${qual:-$(echo "$title" | grep -oP '\b4[kK]\b' | head -1)}"
+      qual="${qual:-unknown}"
+      norm=$(echo "$title" | sed -E 's/\s*[-–—].*//' | sed -E 's/\.\.\.//g' | sed -E 's/\s*[0-9]+[pP].*//' | sed -E 's/\s+$//')
+      echo "${norm}|${year:-0}|${qual}|${slug}|${seeders:-0}|${mirror}" >> "$CACHE_FILE"
+    done
+    [[ -s "$CACHE_FILE" ]] || { rm -f "$CACHE_FILE"; continue; }
+    python3 << PYEOF 2>/dev/null
+import sys
+from collections import defaultdict
+cache = open("${CACHE_FILE}").read().splitlines()
+groups = defaultdict(list)
+for line in cache:
+    parts = line.split('|')
+    if len(parts) < 6: continue
+    groups[parts[0]].append(parts)
+seen = set()
+for gid in sorted(groups):
+    entries = groups[gid]
+    best = max(entries, key=lambda e: int(e[4]) if e[4].isdigit() else 0)
+    key = gid + '|' + best[1]
+    if key in seen: continue
+    seen.add(key)
+    print(gid + '\t' + best[1] + '\t1337x\t' + key)
+PYEOF
+    return 0
   done
+  return 1
+}
+
+x1337_magnets() {
+  local group_key=$1
+  [[ -z "$CACHE_FILE" || ! -f "$CACHE_FILE" ]] && return 1
+  grep "^${group_key}" "$CACHE_FILE" | while IFS='|' read -r _ _ qual slug _ mirror; do
+    local html magnet
+    html=$(fetch_page "https://${mirror}${slug}" 2>/dev/null) || continue
+    magnet=$(echo "$html" | grep -oP 'href="\Kmagnet:[^"]+' | head -1)
+    [[ -z "$magnet" ]] && continue
+    echo "${qual}	${magnet}"
+    return 0
+  done
+  return 1
 }
 
 search() {
-  local query="$1" html slugs titles years i
+  local q=$1
+  local tmpout="/tmp/cinecli_${$}_search.txt"
+  : > "$tmpout"
 
-  html=$(curl -sLf --connect-timeout 10 --max-time 30 \
-    "${BASE_URL}/browse-movies/$(encode "$query")") || {
-    echo "no results for '$query'" >&2
-    exit 1
+  for api_domain in "${TPB_API_MIRRORS[@]}"; do
+    tpb_api_search "$q" "$api_domain" > "$tmpout" 2>/dev/null && {
+      cat "$tmpout"
+      return 0
+    }
+  done
+
+  x1337_search "$q" > "$tmpout" 2>/dev/null && {
+    cat "$tmpout"
+    return 0
   }
 
-  # YTS movie cards use browse-movie-title and browse-movie-year classes.
-  # These selectors break when YTS updates their template — check periodically.
-  mapfile -t slugs < <(echo "$html" | grep -oP '<a class="browse-movie-title" href="\K[^"]+')
-  mapfile -t titles < <(echo "$html" | grep -oP '<a class="browse-movie-title"[^>]*>\K[^<]+')
-  mapfile -t years < <(echo "$html" | grep -oP '<div class="browse-movie-year">\K[^<]+')
-
-  if [[ ${#slugs[@]} -eq 0 ]]; then
-    echo "no results for '$query'" >&2
-    exit 1
-  fi
-
-  for ((i=0; i<${#slugs[@]}; i++)); do
-    printf '%s\t%s\t%s\n' "${titles[$i]}" "${years[$i]}" "${slugs[$i]}"
-  done
+  echo "no results" >&2
+  exit 1
 }
 
-quality() {
-  local slug="$1" html qualities magnets i
-
-  html=$(curl -sLf --connect-timeout 10 --max-time 30 "${BASE_URL}${slug}") || {
-    echo "failed to load movie page" >&2
-    exit 1
-  }
-
-  # Each download-list-item has a <p class="quality"> and a magnet link
-  mapfile -t qualities < <(echo "$html" | grep -oP '<p class="quality">\K[^<]+')
-  mapfile -t magnets < <(echo "$html" | grep -oP 'href="\K(magnet:[^"]+)')
-
-  if [[ ${#magnets[@]} -eq 0 ]]; then
-    echo "no magnets found on page" >&2
-    exit 1
-  fi
-
-  for ((i=0; i<${#magnets[@]}; i++)); do
-    printf '%s\t%s\n' "${qualities[$i]:-unknown}" "${magnets[$i]}"
-  done
+magnets() {
+  local src="$1" id="$2"
+  case $src in
+    tpb) tpb_api_magnets "$id" ;;
+    1337x) x1337_magnets "$id" ;;
+    *) return 1 ;;
+  esac
 }
+
+cleanup() { rm -f "$CACHE_FILE" /tmp/cinecli_${$}_search.txt; }
+trap cleanup EXIT
 
 main() {
   check_deps
-
   [[ $# -ne 1 ]] && { echo "usage: cinecli <search>" >&2; exit 1; }
 
-  selected=$(search "$1" | fzf --delimiter='\t' --with-nth=1,2 --prompt='[Select Movie]> ')
-  [[ -z "$selected" ]] && exit 0
-  slug=$(cut -f3 <<< "$selected")
+  trap cleanup EXIT
 
-  choice=$(quality "$slug" | fzf --delimiter='\t' --with-nth=1 --prompt='[Select Quality]> ')
-  [[ -z "$choice" ]] && exit 0
-  magnet=$(cut -f2 <<< "$choice")
+  search "$1" > /tmp/cinecli_${$}_search.txt
+  selected=$(fzf --delimiter='\t' --with-nth=1,2 --prompt='[Select Movie]> ' < /tmp/cinecli_${$}_search.txt)
+  rm -f /tmp/cinecli_${$}_search.txt
+  [[ -z "$selected" ]] && exit 0
+
+  IFS=$'\t' read -r _ _ src id <<< "$selected"
+  choices=$(magnets "$src" "$id" | fzf --delimiter='\t' --with-nth=1 --prompt='[Select Quality]> ')
+  [[ -z "$choices" ]] && exit 0
+
+  IFS=$'\t' read -r _ magnet <<< "$choices"
+
+  local engine="webtorrent"
+  if ! command -v webtorrent &>/dev/null; then
+    engine="peerflix"
+  fi
+  if command -v peerflix &>/dev/null; then
+    engine=$(printf 'webtorrent\npeerflix' | fzf --prompt='[Choose Engine]> ' --header='webtorrent (default), peerflix (alt)')
+  fi
+  [[ -z "$engine" ]] && exit 0
 
   action=$(printf 'stream\ndownload' | fzf --prompt='[Choose Action]> ')
   [[ -z "$action" ]] && exit 0
 
   if [[ "$action" == "stream" ]]; then
-    webtorrent download "$magnet" --mpv --not-on-top --sequential
+    case $engine in
+      webtorrent) webtorrent download "$magnet" --mpv --not-on-top ;;
+      peerflix)   peerflix "$magnet" --mpv --not-on-top ;;
+    esac
   else
-    webtorrent download "$magnet" --out "$OUTDIR"
+    case $engine in
+      webtorrent) webtorrent download "$magnet" --out "$HOME/Downloads" ;;
+      peerflix)   peerflix "$magnet" --out "$HOME/Downloads" ;;
+    esac
   fi
 }
 
