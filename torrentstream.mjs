@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import WebTorrent from '/usr/lib/webtorrent-cli/node_modules/webtorrent/index.js'
+import http from 'http'
+import fs from 'fs'
 
 const mg = process.argv[2]
-const outdir = process.argv[3] || '/tmp'
+const mode = process.argv[3] || 'stream'
+const outdir = process.argv[4] || '/tmp'
 
 if (!mg) {
-  process.stderr.write('usage: torrentstream.mjs <magnet> [outdir]\n')
+  process.stderr.write('usage: torrentstream.mjs <magnet> [stream|download] [outdir]\n')
   process.exit(1)
 }
 
@@ -50,14 +53,66 @@ torrent.on('metadata', () => {
     .map((f, i) => ({ i, name: f.name, len: f.length }))
     .sort((a, b) => b.len - a.len)
 
-  // pick largest media file
   const pick = files.find(f =>
     /\.(mp4|mkv|webm|avi|mov)$/i.test(f.name) && !/sample/i.test(f.name)
   ) || files[0]
 
-  process.stdout.write(`${outdir}/${pick.name}\n`)
+  if (mode === 'stream') {
+    const file = torrent.files[pick.i]
+    file.select()
 
-  torrent.files[pick.i].select()
+    const ext = pick.name.match(/\.(\w+)$/)?.[1]?.toLowerCase()
+    const mime = ext === 'mkv' ? 'video/x-matroska'
+      : ext === 'webm' ? 'video/webm'
+      : ext === 'avi' ? 'video/x-msvideo'
+      : ext === 'mov' ? 'video/quicktime'
+      : 'video/mp4'
+
+    const server = http.createServer((req, res) => {
+      const range = req.headers.range
+      const size = file.length
+
+      const stream = range
+        ? (() => {
+            const parts = range.replace(/bytes=/, '').split('-')
+            const start = parts[0] ? parseInt(parts[0], 10) : size - parseInt(parts[1], 10)
+            const end = parts[1] ? parseInt(parts[1], 10) : size - 1
+            const len = end - start + 1
+            res.writeHead(206, {
+              'Content-Range': `bytes ${start}-${end}/${size}`,
+              'Content-Type': mime,
+              'Content-Length': len,
+              'Accept-Ranges': 'bytes'
+            })
+            return file.createReadStream({ start, end })
+          })()
+        : (() => {
+            res.writeHead(200, {
+              'Content-Type': mime,
+              'Content-Length': size,
+              'Accept-Ranges': 'bytes'
+            })
+            return file.createReadStream()
+          })()
+
+      stream.pipe(res)
+      res.on('close', () => {
+        stream.destroy()
+      })
+      stream.on('error', () => {})
+    })
+
+    server.on('clientError', () => {})
+
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port
+      fs.writeSync(1, `${port}\n`)
+      process.stderr.write(`streaming: ${pick.name}\n`)
+    })
+  } else {
+    process.stdout.write(`${outdir}/${pick.name}\n`)
+    torrent.files[pick.i].select()
+  }
 })
 
 torrent.on('done', () => {

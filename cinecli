@@ -93,40 +93,38 @@ setup() {
 
 stream() {
   local mg="$1"
-  local tmpdir
-  tmpdir=$(mktemp -d)
+  msg "streaming..."
+  local tmpf=$(mktemp)
 
-  msg "downloading..."
-  node "$stream_js" "$mg" "$tmpdir" &
-  local dpid=$!
+  node "$stream_js" "$mg" stream > "$tmpf" &
+  local pid=$!
 
-  local filepath=""
-  for i in $(seq 1 300); do
+  local port=""
+  for i in $(seq 1 60); do
+    port=$(head -1 "$tmpf" 2>/dev/null)
+    [[ -n "$port" ]] && break
     sleep 1
-    filepath=$(find "$tmpdir" -type f \( -name '*.mp4' -o -name '*.mkv' -o -name '*.webm' -o -name '*.avi' \) 2>/dev/null | head -1)
-    [[ -n "$filepath" ]] && break
   done
 
-  if [[ -z "$filepath" ]]; then
-    fail "timed out waiting for media"
-    kill "$dpid" 2>/dev/null
-    rm -rf "$tmpdir"
+  if [[ -z "$port" ]]; then
+    fail "timed out"
+    kill "$pid" 2>/dev/null
+    rm -f "$tmpf"
     return 1
   fi
 
-  msg "playing: $(basename "$filepath")"
-  mpv --volume=100 --audio-device=pipewire "$filepath" || true
+  mpv --volume=100 --audio-device=alsa "http://127.0.0.1:$port" || true
 
-  kill "$dpid" 2>/dev/null
-  wait "$dpid" 2>/dev/null || true
-  rm -rf "$tmpdir"
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null || true
+  rm -f "$tmpf"
 }
 
 download() {
   local mg="$1"
   mkdir -p "$outdir"
   msg "downloading..."
-  node "$stream_js" "$mg" "$outdir"
+  node "$stream_js" "$mg" download "$outdir"
   ok "saved to $outdir"
 }
 
