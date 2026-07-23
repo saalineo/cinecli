@@ -9,115 +9,30 @@ here=$(dirname "$0")
 search_py="$here/torrentsearch.py"
 stream_js="$here/torrentstream.mjs"
 
-tr="&tr=udp://tracker.opentrackr.org:1337/announce"
-tr+="&tr=udp://tracker.torrent.eu.org:451/announce"
-tr+="&tr=udp://open.stealth.si:80/announce"
-tr+="&tr=udp://tracker.bittor.pw:1337/announce"
-tr+="&tr=udp://exodus.desync.com:6969/announce"
-tr+="&tr=udp://tracker.tiny-vps.com:6969/announce"
-tr+="&tr=udp://retracker.lanta-net.ru:2710/announce"
-tr+="&tr=udp://tracker.moeking.me:6969/announce"
-tr+="&tr=udp://tracker.altrosky.nl:6969/announce"
-tr+="&tr=https://tracker.ubt.nu:443/announce"
-tr+="&tr=wss://tracker.openwebtorrent.com"
-tr+="&tr=wss://tracker.bittorrent.com"
-tr+="&tr=wss://tracker.fastcast.nz"
+tr="&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://tracker.torrent.eu.org:451/announce&tr=udp://open.stealth.si:80/announce&tr=udp://tracker.bittor.pw:1337/announce&tr=udp://exodus.desync.com:6969/announce&tr=udp://tracker.tiny-vps.com:6969/announce&tr=udp://retracker.lanta-net.ru:2710/announce&tr=udp://tracker.moeking.me:6969/announce&tr=udp://tracker.altrosky.nl:6969/announce&tr=https://tracker.ubt.nu:443/announce&tr=wss://tracker.openwebtorrent.com&tr=wss://tracker.bittorrent.com&tr=wss://tracker.fastcast.nz"
 
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[0;33m'; B='\033[0;34m'; N='\033[0m'
 
 banner() {
-  echo -e " ${G}🎬 cinecli${N} — search, stream & download movies"
+  echo -e " ${G}cinecli${N} — search & download movies"
   echo
 }
-msg()  { echo -e " ${B}•${N} $1"; }
-ok()   { echo -e " ${G}✓${N} $1"; }
-fail() { echo -e " ${R}✗${N} $1" >&2; }
-
-detect_os() {
-  case "$(uname -s)" in
-    Linux)   echo "linux" ;;
-    Darwin)  echo "macos" ;;
-    MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
-    *)       echo "unknown" ;;
-  esac
-}
-
-detect_pm() {
-  case "$(detect_os)" in
-    linux)
-      if   command -v apt-get &>/dev/null; then echo "apt"
-      elif command -v pacman  &>/dev/null; then echo "pacman"
-      elif command -v dnf     &>/dev/null; then echo "dnf"
-      elif command -v zypper  &>/dev/null; then echo "zypper"
-      else echo "unknown"; fi ;;
-    macos) echo "brew" ;;
-    windows) echo "pacman" ;;
-    *) echo "unknown" ;;
-  esac
-}
-
-pm_install() {
-  local pm=$(detect_pm)
-  case "$pm" in
-    apt)    sudo apt-get install -y "$@" ;;
-    pacman) sudo pacman -S --noconfirm "$@" ;;
-    dnf)    sudo dnf install -y "$@" ;;
-    zypper) sudo zypper install -y "$@" ;;
-    brew)   brew install "$@" ;;
-    *)      return 1 ;;
-  esac
-}
-
-ensure_cmd() {
-  local cmd="$1" pkg="${2:-$1}"
-  command -v "$cmd" &>/dev/null && return 0
-  msg "installing $pkg..."
-  pm_install "$pkg" && ok "$pkg installed" || { fail "install $pkg manually"; return 1; }
-}
+msg()  { echo -e " ${B}$1${N}"; }
+ok()   { echo -e " ${G}$1${N}"; }
+fail() { echo -e " ${R}$1${N}" >&2; }
 
 setup() {
   [[ -f "$search_py" ]] || { fail "missing $search_py"; exit 1; }
   [[ -f "$stream_js" ]] || { fail "missing $stream_js"; exit 1; }
 
-  for c in curl fzf mpv python3 node; do ensure_cmd "$c" "$c"; done
-
-  if ! ls /usr/lib/webtorrent-cli/node_modules/webtorrent/index.js &>/dev/null; then
-    msg "webtorrent library not found, installing webtorrent-cli..."
-    if command -v npm &>/dev/null; then
-      npm install -g webtorrent-cli 2>/dev/null || fail "install manually: npm install -g webtorrent-cli"
-    else
-      fail "npm not found, install Node.js first"
-    fi
-  fi
-}
-
-stream() {
-  local mg="$1"
-  msg "streaming..."
-  local tmpf=$(mktemp)
-
-  node "$stream_js" "$mg" stream > "$tmpf" &
-  local pid=$!
-
-  local port=""
-  for i in $(seq 1 60); do
-    port=$(head -1 "$tmpf" 2>/dev/null)
-    [[ -n "$port" ]] && break
-    sleep 1
+  for c in curl fzf python3 node; do
+    command -v "$c" &>/dev/null || { fail "install $c first"; exit 1; }
   done
 
-  if [[ -z "$port" ]]; then
-    fail "timed out"
-    kill "$pid" 2>/dev/null
-    rm -f "$tmpf"
-    return 1
-  fi
-
-  mpv --volume=100 --audio-device=alsa "http://127.0.0.1:$port" || true
-
-  kill "$pid" 2>/dev/null
-  wait "$pid" 2>/dev/null || true
-  rm -f "$tmpf"
+  command -v webtorrent &>/dev/null || {
+    msg "installing webtorrent-cli..."
+    npm install -g webtorrent-cli || { fail "npm install -g webtorrent-cli"; exit 1; }
+  }
 }
 
 download() {
@@ -136,7 +51,7 @@ main() {
 
   msg "searching for: ${Y}$1${N}"
   python3 "$search_py" "$1" > "$cache" 2>/dev/null || {
-    fail "no results for '$1'"
+    fail "Can't find '$1'. Check spelling or try a different search."
     exit 1
   }
 
@@ -147,13 +62,13 @@ main() {
     }' "$cache")
 
   msg "select a movie:"
-  s=$(echo "$results" | fzf --delimiter='\t' --with-nth=1 --prompt='🎬  ') || { echo; ok "cancelled"; exit 0; }
+  s=$(echo "$results" | fzf --delimiter='\t' --with-nth=1 --prompt='  ') || { echo; ok "cancelled"; exit 0; }
   echo
   s=$(cut -f2 <<< "$s")
 
   choices=$(awk -F'|' -v s="$s" '$0 ~ s {printf "%s  [%s seeders]\t%s\n", $5, $7, $6}' "$cache")
   msg "select quality:"
-  c=$(echo "$choices" | fzf --delimiter='\t' --with-nth=1 --prompt='📺  ') || { echo; ok "cancelled"; exit 0; }
+  c=$(echo "$choices" | fzf --delimiter='\t' --with-nth=1 --prompt='  ') || { echo; ok "cancelled"; exit 0; }
   echo
   h=$(cut -f2 <<< "$c")
 
@@ -163,15 +78,8 @@ main() {
   e=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$title $year")
   mg="magnet:?xt=urn:btih:$h&dn=$e$tr"
 
-  echo -e " ${G}✓${N} ${B}$title${N} ($year)"
-  msg "action:"
-  a=$(printf '▶ stream\n💾 download' | fzf --prompt='🎯  ') || { echo; ok "cancelled"; exit 0; }
-  echo
-
-  case "$a" in
-    *stream)   msg "launching stream..."; stream "$mg" ;;
-    *download) msg "downloading..."; download "$mg" ;;
-  esac
+  echo -e " ${B}$title${N} ($year)"
+  download "$mg"
 }
 
 main "$@"

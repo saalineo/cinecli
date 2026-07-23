@@ -2,60 +2,38 @@
 
 Search, stream, and download movies from the terminal.
 
-```
-./cinecli <search>
+```bash
+./cinecli <movie name>
 ```
 
-Three prompts: pick a movie → pick quality → pick action (stream/download).
+Pick a movie, pick a quality, and it downloads (or streams) automatically.
 
-## Quick start
+## Usage
 
 ```bash
-git clone <repo-url> && cd cinecli
 ./cinecli inception
-```
-
-First run auto-installs dependencies. After that, just run:
-
-```bash
 ./cinecli "the matrix"
 ./cinecli "interstellar 2014"
 ./cinecli "parasite"
 ```
 
-## How it works
+First run installs dependencies automatically. After that, just search.
 
-Two files in the same directory:
+## What happens
 
-| File | Role |
-|------|------|
-| **`cinecli`** | Bash script — detects your OS, installs deps, runs the search, shows `fzf` menus, builds magnet links, and streams via `webtorrent` |
-| **`torrentsearch.py`** | Python script — searches YTS mirrors, falls back to TPB API, prints results as TSV |
-
-The flow:
-
-```
-you type: ./cinecli inception
-  → cinecli calls torrentsearch.py "inception"
-  → torrentsearch.py scrapes YTS → TPB API fallback → prints TSV
-  → cinecli shows results in fzf: pick movie → pick quality → pick action
-  → cinecli builds magnet link, launches webtorrent → streams to mpv
-```
+1. You type `./cinecli <movie name>`
+2. Pick a movie from the list
+3. Pick a quality / release
+4. Downloads to `~/Downloads/` (or `$OUTDIR`)
 
 ## Platforms
 
-| OS | Package manager | Works? |
-|----|---------------|--------|
-| Linux (Debian/Ubuntu) | `apt` | ✓ |
-| Linux (Arch) | `pacman` | ✓ |
-| Linux (Fedora) | `dnf` | ✓ |
-| Linux (openSUSE) | `zypper` | ✓ |
-| macOS | Homebrew | ✓ |
-| Windows | Git Bash / MSYS2 | ✓ |
+Linux, macOS, Windows (Git Bash / MSYS2).
 
-## Dependencies auto-installed
+## Dependencies
 
-- `curl`, `fzf`, `mpv`, `python3`
-- Node.js + `webtorrent-cli` (or `peerflix` as fallback)
+Auto-installed on first run: `curl`, `fzf`, `python3`, `node`, `webtorrent-cli`.
 
 No config files, no API keys, no tracking.
+
+By Dev, For Dev, of Dev

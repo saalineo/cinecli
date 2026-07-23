@@ -99,10 +99,7 @@ torrent.on('metadata', () => {
       res.on('close', () => {
         stream.destroy()
       })
-      stream.on('error', () => {})
     })
-
-    server.on('clientError', () => {})
 
     server.listen(0, '127.0.0.1', () => {
       const port = server.address().port
