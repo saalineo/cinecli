@@ -1,0 +1,39 @@
+# cinecli configuration
+# overrides: ~/.config/cinecli/config.yml
+
+default_quality: 1080p
+default_language: english
+download_dir: ~/Downloads
+max_results: 50
+timeout: 30
+vpn_required: false
+dns_check: false
+use_doh: true
+proxy: null
+player: mpv
+mpv_args: []
+
+trackers:
+  - udp://tracker.opentrackr.org:1337/announce
+  - udp://tracker.torrent.eu.org:451/announce
+  - udp://open.stealth.si:80/announce
+  - udp://tracker.bittor.pw:1337/announce
+  - udp://exodus.desync.com:6969/announce
+  - udp://tracker.tiny-vps.com:6969/announce
+  - udp://retracker.lanta-net.ru:2710/announce
+  - udp://tracker.moeking.me:6969/announce
+  - udp://tracker.altrosky.nl:6969/announce
+  - https://tracker.ubt.nu:443/announce
+
+sources:
+  yts: true
+  eztv: true
+  tpb: true
+  x1337: true
+  solid: true
+  galaxy: true
+  zooqle: true
+  nyaa: true
+  lime: true
+  rarbg: true
+  btdig: true

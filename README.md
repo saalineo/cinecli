@@ -1,39 +1,87 @@
 # cinecli
 
-Search, stream, and download movies from the terminal.
+<p align="center">
+  <img src="assets/logo-image.png" alt="cinecli logo" width="300">
+</p>
+
+Search, stream, and download movies and web series from your terminal — no account, no API keys, no tracking.
 
 ```bash
-./cinecli <movie name>
+./cinecli "inception"
+./cinecli --series "breaking bad"
+./cinecli --download -q 1080p "interstellar"
 ```
 
-Pick a movie, pick a quality, and it downloads (or streams) automatically.
+## Setup
+
+Run the setup script to install everything:
+
+```bash
+./build.sh
+```
+
+`build.sh` auto-detects your OS (Ubuntu/Debian, Fedora, Arch, macOS, Alpine) and installs all system and Python dependencies (`python3`, `curl`, `fzf`, `mpv`, `libtorrent`, `beautifulsoup4`, `cloudscraper`, `feedparser`, `rich`, `pyyaml`).
+
+### Manual install
+
+```bash
+# Ubuntu/Debian
+sudo apt install -y python3 python3-pip curl fzf mpv python3-libtorrent
+pip3 install --user beautifulsoup4 cloudscraper feedparser rich pyyaml
+
+# macOS
+brew install python@3 curl fzf mpv
+pip3 install --user beautifulsoup4 cloudscraper feedparser rich pyyaml libtorrent
+```
 
 ## Usage
 
-```bash
-./cinecli inception
-./cinecli "the matrix"
-./cinecli "interstellar 2014"
-./cinecli "parasite"
+```
+./cinecli [options] <movie or tv name>
+
+options:
+  -s, --series        search TV series
+  -l, --lang <lang>   filter by language (english hindi tamil telugu ...)
+  -q, --quality <q>   quality preference (4k 1080p 720p 480p)
+  -d, --download      download instead of stream
+  -o, --outdir <dir>  output directory (default: ~/Downloads)
+  -n, --max <n>       max results per search (default: 50)
+  -c, --check         run VPN / DNS-leak checks before searching
+  -h, --help          show help
 ```
 
-First run installs dependencies automatically. After that, just search.
+### Examples
 
-## What happens
+```bash
+./cinecli "inception"
+./cinecli --lang hindi "3 idiots"
+./cinecli --series "breaking bad"
+./cinecli -s --lang korean "squid game"
+./cinecli --download -q 1080p --outdir ~/Movies "interstellar"
+```
 
-1. You type `./cinecli <movie name>`
-2. Pick a movie from the list
-3. Pick a quality / release
-4. Downloads to `~/Downloads/` (or `$OUTDIR`)
+First run will search, then `fzf` lets you pick a title and a quality. It streams (or downloads) automatically.
 
-## Platforms
+## Configuration
 
-Linux, macOS, Windows (Git Bash / MSYS2).
+Settings load from `config.yml` (bundled) with optional override at `~/.config/cinecli/config.yml`.
 
-## Dependencies
+```yaml
+default_quality: 1080p
+default_language: english
+download_dir: ~/Downloads
+max_results: 50
+timeout: 30
+vpn_required: false
+dns_check: false
+use_doh: true
+player: mpv
+```
 
-Auto-installed on first run: `curl`, `fzf`, `python3`, `node`, `webtorrent-cli`.
+### Safety
 
-No config files, no API keys, no tracking.
+`./cinecli -c <query>` runs VPN and DNS-leak checks before searching. Set `vpn_required: true` in config to block searches when no VPN is detected.
 
-By Dev, For Dev, of Dev
+### Sources
+
+cinecli searches TPB, YTS, EZTV, 1337x, Solid, Galaxy, Zooqle, NYAA, Lime, RARBG, and DHT nodes. Enable/disable any in `config.yml` under `sources`.

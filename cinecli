@@ -1,85 +1,256 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-outdir="${OUTDIR:-$HOME/Downloads}"
-cache="/tmp/cinecli_$$.txt"
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+main_py="$here/cinecli.py"
+cache="/tmp/cinecli_results_$$.txt"
 trap 'rm -f "$cache"' EXIT
-
-here=$(dirname "$0")
-search_py="$here/torrentsearch.py"
-stream_js="$here/torrentstream.mjs"
-
-tr="&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://tracker.torrent.eu.org:451/announce&tr=udp://open.stealth.si:80/announce&tr=udp://tracker.bittor.pw:1337/announce&tr=udp://exodus.desync.com:6969/announce&tr=udp://tracker.tiny-vps.com:6969/announce&tr=udp://retracker.lanta-net.ru:2710/announce&tr=udp://tracker.moeking.me:6969/announce&tr=udp://tracker.altrosky.nl:6969/announce&tr=https://tracker.ubt.nu:443/announce&tr=wss://tracker.openwebtorrent.com&tr=wss://tracker.bittorrent.com&tr=wss://tracker.fastcast.nz"
 
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[0;33m'; B='\033[0;34m'; N='\033[0m'
 
 banner() {
-  echo -e " ${G}cinecli${N} — search & download movies"
+  echo -e " ${G}cinecli${N} — search, stream & download movies and web series"
   echo
 }
 msg()  { echo -e " ${B}$1${N}"; }
 ok()   { echo -e " ${G}$1${N}"; }
+warn() { echo -e " ${Y}$1${N}" >&2; }
 fail() { echo -e " ${R}$1${N}" >&2; }
 
+usage() {
+  cat <<EOF
+usage: cinecli [options] <movie or tv name>
+
+options:
+  -s, --series, --tv     search TV series (aliases: --tv, tv)
+  -l, --lang <lang>      filter by language:
+                         english hindi tamil telugu malayalam kannada bengali
+                         spanish french german japanese korean chinese russian
+                         arabic portuguese italian turkish polish dutch
+  -q, --quality <q>      quality preference (4k, 1080p, 720p, 480p)
+  -d, --download         download instead of stream
+  -o, --outdir <dir>     output directory (default: ~/Downloads)
+  -n, --max <n>          max results per search (default: 50)
+  -c, --check            run VPN / DNS-leak checks before searching
+      --install-deps     install missing python packages
+  -h, --help             show this help
+
+examples:
+  cinecli "inception"
+  cinecli --lang hindi "3 idiots"
+  cinecli --series "breaking bad"
+  cinecli -s --lang korean "squid game"
+  cinecli --download -q 1080p --outdir ~/Movies "interstellar"
+EOF
+}
+
+cfg() { python3 "$main_py" config "$1" 2>/dev/null || true; }
+
 setup() {
-  [[ -f "$search_py" ]] || { fail "missing $search_py"; exit 1; }
-  [[ -f "$stream_js" ]] || { fail "missing $stream_js"; exit 1; }
-
-  for c in curl fzf python3 node; do
-    command -v "$c" &>/dev/null || { fail "install $c first"; exit 1; }
+  [[ -f "$main_py" ]] || { fail "missing $main_py"; exit 1; }
+  for c in python3 curl fzf; do
+    command -v "$c" &>/dev/null || { fail "install '$c' first (apt install $c)"; exit 1; }
   done
+  if ! command -v mpv &>/dev/null && ! command -v vlc &>/dev/null; then
+    fail "install mpv or vlc for playback"
+    exit 1
+  fi
+  if ! python3 -c "import libtorrent" &>/dev/null 2>&1; then
+    warn "python-libtorrent not found (required to stream/download)"
+    warn "  pip install libtorrent     or     sudo apt install python3-libtorrent"
+    if [[ -t 0 ]]; then
+      read -r -p "  install via pip now? [y/N] " ans
+      if [[ "${ans:-n}" =~ ^[Yy] ]]; then
+        python3 -m pip install --user libtorrent || warn "pip install failed; try your package manager"
+      fi
+    fi
+  fi
+}
 
-  command -v webtorrent &>/dev/null || {
-    msg "installing webtorrent-cli..."
-    npm install -g webtorrent-cli || { fail "npm install -g webtorrent-cli"; exit 1; }
+install_deps() {
+  msg "installing python packages..."
+  python3 -m pip install --user cloudscraper beautifulsoup4 feedparser rich pyyaml libtorrent || {
+    fail "pip install failed"
+    exit 1
   }
 }
 
-download() {
-  local mg="$1"
-  mkdir -p "$outdir"
-  msg "downloading..."
-  node "$stream_js" "$mg" download "$outdir"
-  ok "saved to $outdir"
+safety_checks() {
+  local safety_json vpn dnsleak
+  safety_json=$(python3 "$main_py" safety 2>/dev/null || echo "{}")
+  vpn=$(printf '%s' "$safety_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('vpn'))" 2>/dev/null || echo "None")
+  dnsleak=$(printf '%s' "$safety_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('dns_leak'))" 2>/dev/null || echo "None")
+  if [[ "$vpn" == "False" ]]; then
+    fail "VPN not connected — enable your VPN first (or set vpn_required: false in config)"
+    exit 1
+  fi
+  if [[ "$vpn" == "True" ]]; then
+    ok "vpn: active"
+  else
+    warn "vpn: not detected (skipping)"
+  fi
+  if [[ "$dnsleak" == "True" ]]; then
+    warn "possible DNS leak detected"
+  else
+    ok "dns: no leak detected"
+  fi
 }
 
 main() {
   banner
+
+  mode=movie
+  download=0
+  lang=""
+  quality=""
+  outdir=""
+  max=""
+  check=0
+  do_install=0
+  query=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -s|--series|--tv|-tv|tv) mode=tv; shift ;;
+      -d|--download) download=1; shift ;;
+      -l|--lang)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        lang="$2"; shift 2 ;;
+      -q|--quality)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        quality="$2"; shift 2 ;;
+      -o|--outdir)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        outdir="$2"; shift 2 ;;
+      -n|--max|--max-results)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        max="$2"; shift 2 ;;
+      -c|--check) check=1; shift ;;
+      --install-deps) do_install=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage >&2; exit 1 ;;
+      *) query="$1"; shift ;;
+    esac
+  done
+
+  [[ -z "$query" ]] && { usage >&2; exit 1; }
+
   setup
+  [[ $do_install == 1 ]] && install_deps
 
-  [[ $# -ne 1 ]] && { echo "usage: ./cinecli <movie name>" >&2; exit 1; }
+  [[ -z "$lang" ]]    && lang=$(cfg default_language)
+  [[ -z "$quality" ]] && quality=$(cfg default_quality)
+  [[ -z "$outdir" ]]  && outdir=$(cfg download_dir)
+  [[ -z "$max" ]]     && max=$(cfg max_results)
+  player=$(cfg player)
+  [[ -z "$player" || "$player" == "null" ]] && player=mpv
 
-  msg "searching for: ${Y}$1${N}"
-  python3 "$search_py" "$1" > "$cache" 2>/dev/null || {
-    fail "Can't find '$1'. Check spelling or try a different search."
+  if [[ $check == 1 || "$(cfg vpn_required)" == "true" || "$(cfg dns_check)" == "true" ]]; then
+    safety_checks
+  fi
+
+  msg "searching for: ${Y}${query}${N} [${mode}]"
+  search_args=(search --mode "$mode")
+  [[ -n "$lang" ]] && search_args+=(-l "$lang")
+  [[ -n "$quality" ]] && search_args+=(-q "$quality")
+  [[ -n "$max" ]] && search_args+=(--max-results "$max")
+  search_args+=("$query")
+
+  if python3 "$main_py" "${search_args[@]}" > "$cache" \
+     2> >(while IFS= read -r line; do printf '  %s\n' "$line"; done >&2); then
+    rc=0
+  else
+    rc=$?
+  fi
+
+  if [[ $rc -ne 0 || ! -s "$cache" ]]; then
+    fail "no results found for '$query'"
+    if [[ -n "$lang" && "$lang" != "english" ]]; then
+      warn "  tip: try without --lang, or check the spelling"
+    else
+      warn "  tip: check the spelling or try a different title"
+    fi
     exit 1
-  }
+  fi
 
   results=$(awk -F'|' '
-    !v[$2,$3]++ {
-      r = $9 ? " " $9 "/10" : ""
-      printf "%s (%s)%s\t%s\n", $2, $3, r, $4
+    BEGIN { S = sprintf("%c", 31) }
+    !seen[$2 SUBSEP $3]++ {
+      y = ($3 != 0) ? " (" $3 ")" : ""
+      e = ($8 != "") ? " [" $8 "]" : ""
+      printf "%s%s%s\t%s%s%s\n", $2, y, e, $2, S, $3
     }' "$cache")
 
-  msg "select a movie:"
-  s=$(echo "$results" | fzf --delimiter='\t' --with-nth=1 --prompt='  ') || { echo; ok "cancelled"; exit 0; }
+  msg "select a title:"
+  sel=$(printf '%s\n' "$results" | fzf --delimiter=$'\t' --with-nth=1 --reverse --prompt='  ') \
+    || { echo; ok "cancelled"; exit 0; }
+  sel=${sel#*$'\t'}
+  IFS=$'\x1f' read -r keytitle keyyear <<< "$sel"
   echo
-  s=$(cut -f2 <<< "$s")
 
-  choices=$(awk -F'|' -v s="$s" '$0 ~ s {printf "%s  [%s seeders]\t%s\n", $5, $7, $6}' "$cache")
+  choices=$(awk -F'|' -v t="$keytitle" -v y="$keyyear" '
+    $2 == t && $3 == y {
+      printf "%s  [%s seeders]  %s  %s\t%s\n", $4, $7, $5, $1, $6
+    }' "$cache")
+  if [[ -z "$choices" ]]; then
+    fail "no releases for that title"
+    exit 1
+  fi
+
   msg "select quality:"
-  c=$(echo "$choices" | fzf --delimiter='\t' --with-nth=1 --prompt='  ') || { echo; ok "cancelled"; exit 0; }
+  c=$(printf '%s\n' "$choices" | fzf --delimiter=$'\t' --with-nth=1 --reverse --prompt='  ') \
+    || { echo; ok "cancelled"; exit 0; }
   echo
-  h=$(cut -f2 <<< "$c")
+  h=${c#*$'\t'}
+  [[ -n "$h" ]] || { fail "invalid selection"; exit 1; }
 
-  l=$(grep -F "|$s|" "$cache" | head -1)
-  title=$(cut -d'|' -f2 <<< "$l")
-  year=$(cut -d'|' -f3 <<< "$l")
-  e=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$title $year")
-  mg="magnet:?xt=urn:btih:$h&dn=$e$tr"
+  if [[ "$keyyear" != "0" && -n "$keyyear" ]]; then
+    dn="$keytitle $keyyear"
+    yl=" ($keyyear)"
+  else
+    dn="$keytitle"
+    yl=""
+  fi
 
-  echo -e " ${B}$title${N} ($year)"
-  download "$mg"
+  echo -e " ${B}${keytitle}${N}${yl}"
+
+  if [[ $download == 1 ]]; then
+    msg "downloading to $outdir..."
+    python3 "$main_py" download --hash "$h" --title "$dn" --outdir "$outdir" || {
+      fail "download failed"
+      exit 1
+    }
+  else
+    msg "starting stream..."
+    mapfile -t tries < <(awk -F'|' -v t="$keytitle" -v y="$keyyear" '
+      $2 == t && $3 == y && $6 != "" {
+        printf "%s\t%s  [%s seeders]  %s  %s\n", $6, $4, $7, $5, $1
+      }' "$cache")
+    if [[ ${#tries[@]} -eq 0 ]]; then
+      fail "no releases for that title"
+      exit 1
+    fi
+    ordered=("$h")
+    for t in "${tries[@]}"; do
+      [[ "${t%%$'\t'*}" == "$h" ]] && continue
+      ordered+=("${t%%$'\t'*}")
+    done
+    played=0
+    for ch in "${ordered[@]}"; do
+      [[ -n "$ch" ]] || continue
+      label=$(awk -F'|' -v x="$ch" '$6 == x { print $4 "  [" $7 " seeders]  " $5 "  " $1; exit }' "$cache")
+      ok "  trying: ${label:-release}"
+      if python3 "$main_py" stream --hash "$ch" --title "$dn" --outdir "$outdir" --player "$player"; then
+        played=1
+        break
+      fi
+      warn "  unreachable; trying next release..."
+    done
+    if [[ $played -ne 1 ]]; then
+      fail "streaming failed for all releases"
+      exit 1
+    fi
+  fi
 }
 
 main "$@"
