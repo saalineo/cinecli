@@ -6,6 +6,16 @@ main_py="$here/cinecli.py"
 cache="/tmp/cinecli_results_$$.txt"
 trap 'rm -f "$cache"' EXIT
 
+if [[ -d "$here/.venv" && -x "$here/.venv/bin/python3" ]]; then
+  py="$here/.venv/bin/python3"
+elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python3" ]]; then
+  py="${VIRTUAL_ENV}/bin/python3"
+elif command -v python3 &>/dev/null; then
+  py="python3"
+else
+  py="python"
+fi
+
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[0;33m'; B='\033[0;34m'; N='\033[0m'
 
 banner() {
@@ -44,24 +54,24 @@ examples:
 EOF
 }
 
-cfg() { python3 "$main_py" config "$1" 2>/dev/null || true; }
+cfg() { "$py" "$main_py" config "$1" 2>/dev/null || true; }
 
 setup() {
   [[ -f "$main_py" ]] || { fail "missing $main_py"; exit 1; }
-  for c in python3 curl fzf; do
-    command -v "$c" &>/dev/null || { fail "install '$c' first (apt install $c)"; exit 1; }
+  for c in "$py" curl fzf; do
+    command -v "$c" &>/dev/null || { fail "install '$c' first"; exit 1; }
   done
   if ! command -v mpv &>/dev/null && ! command -v vlc &>/dev/null; then
     fail "install mpv or vlc for playback"
     exit 1
   fi
-  if ! python3 -c "import libtorrent" &>/dev/null 2>&1; then
+  if ! "$py" -c "import libtorrent" &>/dev/null 2>&1; then
     warn "python-libtorrent not found (required to stream/download)"
     warn "  pip install libtorrent     or     sudo apt install python3-libtorrent"
     if [[ -t 0 ]]; then
       read -r -p "  install via pip now? [y/N] " ans
       if [[ "${ans:-n}" =~ ^[Yy] ]]; then
-        python3 -m pip install --user libtorrent || warn "pip install failed; try your package manager"
+        "$py" -m pip install --user libtorrent || warn "pip install failed; try your package manager"
       fi
     fi
   fi
@@ -69,7 +79,7 @@ setup() {
 
 install_deps() {
   msg "installing python packages..."
-  python3 -m pip install --user cloudscraper beautifulsoup4 feedparser rich pyyaml libtorrent || {
+  "$py" -m pip install --user cloudscraper beautifulsoup4 feedparser rich pyyaml libtorrent || {
     fail "pip install failed"
     exit 1
   }
@@ -77,9 +87,9 @@ install_deps() {
 
 safety_checks() {
   local safety_json vpn dnsleak
-  safety_json=$(python3 "$main_py" safety 2>/dev/null || echo "{}")
-  vpn=$(printf '%s' "$safety_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('vpn'))" 2>/dev/null || echo "None")
-  dnsleak=$(printf '%s' "$safety_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('dns_leak'))" 2>/dev/null || echo "None")
+  safety_json=$("$py" "$main_py" safety 2>/dev/null || echo "{}")
+  vpn=$(printf '%s' "$safety_json" | "$py" -c "import json,sys; print(json.load(sys.stdin).get('vpn'))" 2>/dev/null || echo "None")
+  dnsleak=$(printf '%s' "$safety_json" | "$py" -c "import json,sys; print(json.load(sys.stdin).get('dns_leak'))" 2>/dev/null || echo "None")
   if [[ "$vpn" == "False" ]]; then
     fail "VPN not connected — enable your VPN first (or set vpn_required: false in config)"
     exit 1
@@ -156,7 +166,7 @@ main() {
   [[ -n "$max" ]] && search_args+=(--max-results "$max")
   search_args+=("$query")
 
-  if python3 "$main_py" "${search_args[@]}" > "$cache" \
+  if "$py" "$main_py" "${search_args[@]}" > "$cache" \
      2> >(while IFS= read -r line; do printf '  %s\n' "$line"; done >&2); then
     rc=0
   else
@@ -216,7 +226,7 @@ main() {
 
   if [[ $download == 1 ]]; then
     msg "downloading to $outdir..."
-    python3 "$main_py" download --hash "$h" --title "$dn" --outdir "$outdir" || {
+    "$py" "$main_py" download --hash "$h" --title "$dn" --outdir "$outdir" || {
       fail "download failed"
       exit 1
     }
@@ -240,7 +250,7 @@ main() {
       [[ -n "$ch" ]] || continue
       label=$(awk -F'|' -v x="$ch" '$6 == x { print $4 "  [" $7 " seeders]  " $5 "  " $1; exit }' "$cache")
       ok "  trying: ${label:-release}"
-      if python3 "$main_py" stream --hash "$ch" --title "$dn" --outdir "$outdir" --player "$player"; then
+      if "$py" "$main_py" stream --hash "$ch" --title "$dn" --outdir "$outdir" --player "$player"; then
         played=1
         break
       fi

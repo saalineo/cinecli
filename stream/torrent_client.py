@@ -162,14 +162,66 @@ class TorrentClient:
         except Exception:
             pass
 
-    def downloaded_bytes(self, index):
+    def set_sequential(self, sequential=True):
+        if self.handle and self.handle.has_metadata():
+            try:
+                self.handle.set_sequential_download(sequential)
+            except Exception:
+                pass
+
+    def piece_range_for(self, file_idx, offset, length):
+        if not self.handle or not self.handle.has_metadata():
+            return None
         try:
-            progress = self.handle.file_progress()
-            if isinstance(progress, list):
-                return progress[index] if 0 <= index < len(progress) else None
-            return progress
+            ti = self.torrent_info()
+            fs = ti.files()
+            piece_len = ti.piece_length()
+            if piece_len <= 0:
+                return None
+            base_offset = fs.file_offset(file_idx)
+            first_p = (base_offset + offset) // piece_len
+            last_p = (base_offset + max(0, offset + length - 1)) // piece_len
+            num_pieces = ti.num_pieces()
+            first_p = max(0, min(first_p, num_pieces - 1))
+            last_p = max(0, min(last_p, num_pieces - 1))
+            return (first_p, last_p)
         except Exception:
             return None
+
+    def have_pieces(self, first_piece, last_piece):
+        if not self.handle:
+            return False
+        try:
+            return all(self.handle.have_piece(p) for p in range(first_piece, last_piece + 1))
+        except Exception:
+            return False
+
+    def prioritize_range(self, first_piece, last_piece, deadline=0):
+        if not self.handle:
+            return
+        for p in range(first_piece, last_piece + 1):
+            try:
+                if not self.handle.have_piece(p):
+                    self.handle.set_piece_deadline(p, deadline)
+            except Exception:
+                pass
+
+    def wait_for_range(self, file_idx, offset, length, timeout=30, stop_event=None):
+        pr = self.piece_range_for(file_idx, offset, length)
+        if not pr:
+            return True
+        first_p, last_p = pr
+        if self.have_pieces(first_p, last_p):
+            return True
+        self.prioritize_range(first_p, last_p, deadline=0)
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if stop_event and stop_event.is_set():
+                return False
+            if self.have_pieces(first_p, last_p):
+                return True
+            time.sleep(0.05)
+        return self.have_pieces(first_p, last_p)
 
     def read_chunk(self, index, offset, length):
         path = getattr(self, "file_path", None)
@@ -181,6 +233,11 @@ class TorrentClient:
                 return fh.read(length)
         except OSError:
             return b""
+
+    def read_chunk_blocking(self, index, offset, length, timeout=30, stop_event=None):
+        if not self.wait_for_range(index, offset, length, timeout=timeout, stop_event=stop_event):
+            return b""
+        return self.read_chunk(index, offset, length)
 
     def status(self):
         if not self.handle:
