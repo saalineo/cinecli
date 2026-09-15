@@ -43,10 +43,8 @@ DEFAULTS = {
         "x1337": True,
         "solid": True,
         "galaxy": True,
-        "zooqle": True,
         "nyaa": True,
         "lime": True,
-        "rarbg": True,
         "btdig": True,
     },
 }

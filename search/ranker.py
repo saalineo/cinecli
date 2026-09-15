@@ -12,9 +12,7 @@ SOURCE_WEIGHT = {
     "x1337": 0.9,
     "lime": 0.8,
     "galaxy": 0.8,
-    "zooqle": 0.75,
     "btdig": 0.7,
-    "rarbg": 0.7,
 }
 
 

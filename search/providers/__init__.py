@@ -5,10 +5,8 @@ MODULES = {
     "x1337": "x1337",
     "solid": "solid_torrents",
     "galaxy": "torrent_galaxy",
-    "zooqle": "zooqle",
     "nyaa": "nyaa",
     "lime": "limetorrents",
-    "rarbg": "rarbg",
     "btdig": "dht",
 }
 
