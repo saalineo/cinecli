@@ -23,7 +23,11 @@ DEFAULTS = {
     "use_doh": True,
     "proxy": None,
     "player": "mpv",
-    "mpv_args": [],
+    "mpv_args": [
+        "--hwdec=auto-safe",
+        "--cache=yes",
+        "--demuxer-max-bytes=150M",
+    ],
     "trackers": [
         "udp://tracker.opentrackr.org:1337/announce",
         "udp://tracker.torrent.eu.org:451/announce",

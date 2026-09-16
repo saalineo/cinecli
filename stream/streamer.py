@@ -210,17 +210,35 @@ def stream(magnet, title="", outdir=None, player="mpv", player_args=None, tracke
     progress = threading.Thread(target=_progress_loop, args=(tc, stop), daemon=True)
     progress.start()
 
-    sys.stderr.write("  buffering stream...\n")
-    tc.wait_for_range(idx, 0, min(size, 512 * 1024), timeout=30, stop_event=stop)
+    PREBUFFER_BYTES = min(size, max(12 * 1024 * 1024, int(size * 0.005)))
+    sys.stderr.write(f"  buffering stream ({human_size(PREBUFFER_BYTES)})...\n")
+    buffered = tc.wait_for_range(idx, 0, PREBUFFER_BYTES, timeout=45, stop_event=stop)
+    if not buffered and not stop.is_set():
+        sys.stderr.write("  warning: buffer timeout reached; attempting playback anyway...\n")
 
     safe_name = urllib.parse.quote(name)
     url = f"http://127.0.0.1:{server.port}/{safe_name}"
     args = [player]
     if player == "mpv":
-        args.extend(["--no-ytdl", "--force-window"])
+        args.extend([
+            "--no-ytdl",
+            "--force-window=immediate",
+            "--cache=yes",
+            "--cache-secs=60",
+            "--demuxer-max-bytes=150M",
+            "--demuxer-max-back-bytes=50M",
+            "--demuxer-readahead-secs=30",
+            "--msg-level=ffmpeg=error",
+            "--hr-seek=yes",
+            "--hr-seek-framedrop=yes",
+        ])
         if title:
             args.append(f"--force-media-title={title}")
     elif player == "vlc":
+        args.extend([
+            "--network-caching=5000",
+            "--file-caching=5000",
+        ])
         if title:
             args.append(f"--meta-title={title}")
     else:
