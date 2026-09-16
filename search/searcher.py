@@ -50,14 +50,11 @@ def enabled_sources(cfg, mode, lang):
         order.remove("eztv")
 
     def _is_enabled(name):
-        # Direct key takes precedence
+        # Direct key takes precedence; PROVIDER_ORDER uses "dht" but config uses "btdig"
         if name in src:
             return bool(src[name])
-        # Alias handling: PROVIDER_ORDER uses "dht" but config uses "btdig"
         if name == "dht" and "btdig" in src:
             return bool(src["btdig"])
-        if name == "btdig" and "dht" in src:
-            return bool(src["dht"])
         return True
 
     return [name for name in order if _is_enabled(name)]

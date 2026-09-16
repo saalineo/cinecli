@@ -25,6 +25,14 @@ _scraper = None
 
 
 def _scrape(net, url):
+    # Rate-limit even when bypassing Net via cloudscraper; avoid double-counting.
+    already_limited = False
+    try:
+        if hasattr(net, "limiter") and hasattr(net.limiter, "acquire"):
+            net.limiter.acquire("x1337")
+            already_limited = True
+    except Exception:
+        pass
     if cloudscraper is not None:
         global _scraper
         if _scraper is None:
@@ -42,6 +50,9 @@ def _scrape(net, url):
             except Exception:
                 pass
             # Fall through to net.get on cloudscraper failure/empty
+    # If already rate-limited at top, avoid double-counting in fallback.
+    if already_limited:
+        return net.get(url, source=None)
     return net.get(url, source="x1337")
 
 
