@@ -206,6 +206,41 @@ class TorrentClient:
             except Exception:
                 pass
 
+    def clear_piece_deadlines(self):
+        """Clears high deadlines for pieces to prioritize new seek positions."""
+        if not self.handle or not self.handle.has_metadata():
+            return
+        try:
+            ti = self.torrent_info()
+            num_pieces = ti.num_pieces()
+            for p in range(num_pieces):
+                try:
+                    self.handle.reset_piece_deadline(p)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def prioritize_playhead(self, file_idx, current_offset, window_bytes=20 * 1024 * 1024):
+        """
+        Prioritizes pieces immediately following the current read offset.
+        Assigns immediate deadline to the next few pieces and descending priority for the window.
+        """
+        if not self.handle or not self.handle.has_metadata():
+            return
+        pr = self.piece_range_for(file_idx, current_offset, window_bytes)
+        if not pr:
+            return
+        first_p, last_p = pr
+
+        for i, p in enumerate(range(first_p, last_p + 1)):
+            try:
+                if not self.handle.have_piece(p):
+                    deadline = 0 if i < 3 else (i * 200)  # ms
+                    self.handle.set_piece_deadline(p, deadline)
+            except Exception:
+                pass
+
     def wait_for_range(self, file_idx, offset, length, timeout=30, stop_event=None):
         pr = self.piece_range_for(file_idx, offset, length)
         if not pr:

@@ -80,6 +80,18 @@ class _RangeHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             if head_only:
                 return
+            if hasattr(self.tc, "clear_piece_deadlines"):
+                self.tc.clear_piece_deadlines()
+            if hasattr(self.tc, "prioritize_playhead"):
+                self.tc.prioritize_playhead(idx, start, window_bytes=30 * 1024 * 1024)
+            # Re-prioritize header & footer in case demuxer needs index
+            head_pr = self.tc.piece_range_for(idx, 0, min(size, 4 * 1024 * 1024))
+            if head_pr:
+                self.tc.prioritize_range(head_pr[0], head_pr[1], deadline=1000)
+            if size > 4 * 1024 * 1024:
+                tail_pr = self.tc.piece_range_for(idx, size - 4 * 1024 * 1024, 4 * 1024 * 1024)
+                if tail_pr:
+                    self.tc.prioritize_range(tail_pr[0], tail_pr[1], deadline=1000)
             self._pump(idx, start, length)
         else:
             self.send_response(200)
@@ -89,6 +101,8 @@ class _RangeHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             if head_only:
                 return
+            if hasattr(self.tc, "prioritize_playhead"):
+                self.tc.prioritize_playhead(idx, 0, window_bytes=30 * 1024 * 1024)
             self._pump(idx, 0, size)
 
     def _pump(self, idx, start, length):
