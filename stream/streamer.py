@@ -9,6 +9,7 @@ import urllib.parse
 
 from stream.torrent_client import TorrentClient, save_path_for
 from utils.misc import human_size, magnet_for
+from utils.subtitles import fetch_subtitles
 
 MIME = {
     "mp4": "video/mp4",
@@ -180,7 +181,17 @@ def pick_video(files):
     return vids[0]
 
 
-def stream(magnet, title="", outdir=None, player="mpv", player_args=None, trackers=None, timeout=60, proxy=None):
+def stream(
+    magnet,
+    title="",
+    outdir=None,
+    player="mpv",
+    player_args=None,
+    trackers=None,
+    timeout=60,
+    proxy=None,
+    sub_lang=None,
+):
     tc = TorrentClient(trackers=trackers, timeout=timeout, proxy=proxy)
     save_path = save_path_for(outdir or "/tmp")
     sys.stderr.write("  connecting to swarm...\n")
@@ -212,6 +223,14 @@ def stream(magnet, title="", outdir=None, player="mpv", player_args=None, tracke
             tc.prioritize_range(tail_pr[0], tail_pr[1], deadline=0)
 
     sys.stderr.write(f"  streaming: {name} ({human_size(size)})\n")
+
+    sub_file = None
+    if sub_lang:
+        sub_title = title or name
+        sys.stderr.write(f"  fetching {sub_lang} subtitles...\n")
+        sub_file = fetch_subtitles(title=sub_title, lang=sub_lang, outdir=save_path)
+        if sub_file and os.path.exists(sub_file):
+            sys.stderr.write(f"  subtitles loaded: {os.path.basename(sub_file)}\n")
 
     stop = threading.Event()
     server = _Server(tc, stop)
@@ -248,6 +267,8 @@ def stream(magnet, title="", outdir=None, player="mpv", player_args=None, tracke
         ])
         if title:
             args.append(f"--force-media-title={title}")
+        if sub_file and os.path.exists(sub_file):
+            args.append(f"--sub-file={sub_file}")
     elif player == "vlc":
         args.extend([
             "--network-caching=5000",
@@ -255,8 +276,12 @@ def stream(magnet, title="", outdir=None, player="mpv", player_args=None, tracke
         ])
         if title:
             args.append(f"--meta-title={title}")
+        if sub_file and os.path.exists(sub_file):
+            args.append(f"--sub-file={sub_file}")
     else:
         args.append("--force-window")
+        if sub_file and os.path.exists(sub_file):
+            args.append(f"--sub-file={sub_file}")
 
     if player_args:
         args.extend(player_args)

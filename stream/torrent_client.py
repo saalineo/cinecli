@@ -120,6 +120,18 @@ class TorrentClient:
             self.handle = self.session.add_torrent(at)
         except Exception as exc:
             raise RuntimeError(f"failed to add torrent: {exc}") from exc
+        if self.trackers and self.handle.is_valid():
+            try:
+                existing = set()
+                for tr in self.handle.trackers():
+                    u = tr.get("url") if isinstance(tr, dict) else getattr(tr, "url", None)
+                    if u:
+                        existing.add(u)
+                for tr in self.trackers:
+                    if tr not in existing:
+                        self.handle.add_tracker({"url": tr, "tier": 0})
+            except Exception:
+                pass
 
     def pop_errors(self):
         errors = []

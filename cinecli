@@ -41,6 +41,7 @@ options:
   -d, --download         download instead of stream
   -o, --outdir <dir>     output directory (default: ~/Downloads)
   -n, --max <n>          max results per search (default: 50)
+  --sub <lang>           download & load subtitles for stream (e.g. en, es, hi)
   -c, --check            run VPN / DNS-leak checks before searching
       --install-deps     install missing python packages
   -h, --help             show this help
@@ -115,6 +116,7 @@ main() {
   quality=""
   outdir=""
   max=""
+  sub_lang=""
   check=0
   do_install=0
   query=""
@@ -135,6 +137,9 @@ main() {
       -n|--max|--max-results)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         max="$2"; shift 2 ;;
+      --sub)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        sub_lang="$2"; shift 2 ;;
       -c|--check) check=1; shift ;;
       --install-deps) do_install=1; shift ;;
       -h|--help) usage; exit 0 ;;
@@ -250,7 +255,9 @@ main() {
       [[ -n "$ch" ]] || continue
       label=$(awk -F'|' -v x="$ch" '$6 == x { print $4 "  [" $7 " seeders]  " $5 "  " $1; exit }' "$cache")
       ok "  trying: ${label:-release}"
-      if "$py" "$main_py" stream --hash "$ch" --title "$dn" --outdir "$outdir" --player "$player"; then
+      stream_cmd=("$py" "$main_py" stream --hash "$ch" --title "$dn" --outdir "$outdir" --player "$player")
+      [[ -n "$sub_lang" ]] && stream_cmd+=(--sub "$sub_lang")
+      if "${stream_cmd[@]}"; then
         played=1
         break
       fi

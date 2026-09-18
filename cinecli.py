@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import argparse
 import json
 import os
@@ -74,19 +73,30 @@ def cmd_safety(args):
     return 0
 
 
-def _build_magnet(args, cfg):
+def _resolve_trackers(cfg):
+    if cfg.get("auto_sync_trackers", True):
+        try:
+            from utils.trackers import get_live_trackers
+            return get_live_trackers(fallback=cfg.get("trackers"))
+        except Exception:
+            pass
+    return cfg.get("trackers") or []
+
+
+def _build_magnet(args, cfg, trackers=None):
     if args.magnet:
         return args.magnet
     if not args.hash or not re.fullmatch(r"[0-9a-fA-F]{40}", args.hash):
         raise SystemExit(f"  invalid info-hash: {args.hash!r} (expected 40 hex chars)")
-    return magnet_for(args.hash, args.title or "", cfg.get("trackers"))
+    return magnet_for(args.hash, args.title or "", trackers or _resolve_trackers(cfg))
 
 
 def cmd_stream(args):
     from stream.streamer import stream
 
     cfg = load_config()
-    magnet = _build_magnet(args, cfg)
+    trackers = _resolve_trackers(cfg)
+    magnet = _build_magnet(args, cfg, trackers=trackers)
     player = args.player or cfg_get(cfg, "player", "mpv")
     player_args = cfg_get(cfg, "mpv_args", [])
     proxy = cfg_get(cfg, "proxy")
@@ -96,9 +106,10 @@ def cmd_stream(args):
         outdir=args.outdir,
         player=player,
         player_args=player_args,
-        trackers=cfg.get("trackers"),
+        trackers=trackers,
         timeout=cfg_get(cfg, "timeout", 30),
         proxy=proxy,
+        sub_lang=args.sub,
     )
 
 
@@ -106,13 +117,14 @@ def cmd_download(args):
     from stream.downloader import download
 
     cfg = load_config()
-    magnet = _build_magnet(args, cfg)
+    trackers = _resolve_trackers(cfg)
+    magnet = _build_magnet(args, cfg, trackers=trackers)
     proxy = cfg_get(cfg, "proxy")
     return download(
         magnet,
         outdir=args.outdir or resolve_dir(cfg),
         title=args.title or "",
-        trackers=cfg.get("trackers"),
+        trackers=trackers,
         timeout=cfg_get(cfg, "timeout", 30),
         all_files=args.all_files,
         proxy=proxy,
@@ -141,6 +153,7 @@ def main(argv=None):
     p_stream.add_argument("--title", default=None)
     p_stream.add_argument("--outdir", default=None)
     p_stream.add_argument("--player", default=None)
+    p_stream.add_argument("--sub", default=None, help="download and load subtitles for language (e.g. en, es)")
 
     p_down = sub.add_parser("download", help="download a torrent")
     p_down.add_argument("--magnet", default=None)
