@@ -3,7 +3,7 @@ set -euo pipefail
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 main_py="$here/cinecli.py"
-cache="/tmp/cinecli_results_$$.txt"
+cache=$(mktemp "${TMPDIR:-/tmp}/cinecli-results.XXXXXX")
 trap 'rm -f "$cache"' EXIT
 
 if [[ -d "$here/.venv" && -x "$here/.venv/bin/python3" ]]; then
@@ -43,6 +43,7 @@ options:
   -n, --max <n>          max results per search (default: 50)
   --sub <lang>           download & load subtitles for stream (e.g. en, es, hi)
   -c, --check            run VPN / DNS-leak checks before searching
+      --doctor            show readiness and configuration diagnostics
       --install-deps     install missing python packages
   -h, --help             show this help
 
@@ -58,11 +59,12 @@ EOF
 cfg() { "$py" "$main_py" config "$1" 2>/dev/null || true; }
 
 setup() {
+  local need_player="$1"
   [[ -f "$main_py" ]] || { fail "missing $main_py"; exit 1; }
-  for c in "$py" curl fzf; do
+  for c in "$py" fzf; do
     command -v "$c" &>/dev/null || { fail "install '$c' first"; exit 1; }
   done
-  if ! command -v mpv &>/dev/null && ! command -v vlc &>/dev/null; then
+  if [[ "$need_player" == 1 ]] && ! command -v mpv &>/dev/null && ! command -v vlc &>/dev/null; then
     fail "install mpv or vlc for playback"
     exit 1
   fi
@@ -102,8 +104,10 @@ safety_checks() {
   fi
   if [[ "$dnsleak" == "True" ]]; then
     warn "possible DNS leak detected"
-  else
+  elif [[ "$dnsleak" == "False" ]]; then
     ok "dns: no leak detected"
+  else
+    warn "dns: not verified; use a controlled DNS-leak test"
   fi
 }
 
@@ -119,7 +123,7 @@ main() {
   sub_lang=""
   check=0
   do_install=0
-  query=""
+  query_parts=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -142,16 +146,21 @@ main() {
         sub_lang="$2"; shift 2 ;;
       -c|--check) check=1; shift ;;
       --install-deps) do_install=1; shift ;;
+      --doctor) "$py" "$main_py" doctor; exit $? ;;
       -h|--help) usage; exit 0 ;;
       -*) usage >&2; exit 1 ;;
-      *) query="$1"; shift ;;
+      *) query_parts+=("$1"); shift ;;
     esac
   done
 
-  [[ -z "$query" ]] && { usage >&2; exit 1; }
+  if [[ $do_install == 1 ]]; then
+    install_deps
+    [[ ${#query_parts[@]} -eq 0 ]] && exit 0
+  fi
+  [[ ${#query_parts[@]} -eq 0 ]] && { usage >&2; exit 1; }
+  query="${query_parts[*]}"
 
-  setup
-  [[ $do_install == 1 ]] && install_deps
+  [[ $download == 1 ]] && setup 0 || setup 1
 
   [[ -z "$lang" ]]    && lang=$(cfg default_language)
   [[ -z "$quality" ]] && quality=$(cfg default_quality)
@@ -159,6 +168,15 @@ main() {
   [[ -z "$max" ]]     && max=$(cfg max_results)
   player=$(cfg player)
   [[ -z "$player" || "$player" == "null" ]] && player=mpv
+  if [[ $download == 0 ]] && ! command -v "$player" &>/dev/null; then
+    if command -v vlc &>/dev/null; then
+      warn "configured player '$player' not found; using vlc"
+      player=vlc
+    else
+      fail "configured player '$player' was not found"
+      exit 1
+    fi
+  fi
 
   if [[ $check == 1 || "$(cfg vpn_required)" == "true" || "$(cfg dns_check)" == "true" ]]; then
     safety_checks
@@ -255,7 +273,7 @@ main() {
       [[ -n "$ch" ]] || continue
       label=$(awk -F'|' -v x="$ch" '$6 == x { print $4 "  [" $7 " seeders]  " $5 "  " $1; exit }' "$cache")
       ok "  trying: ${label:-release}"
-      stream_cmd=("$py" "$main_py" stream --hash "$ch" --title "$dn" --outdir "$outdir" --player "$player")
+      stream_cmd=("$py" "$main_py" stream --hash "$ch" --title "$dn" --player "$player")
       [[ -n "$sub_lang" ]] && stream_cmd+=(--sub "$sub_lang")
       if "${stream_cmd[@]}"; then
         played=1

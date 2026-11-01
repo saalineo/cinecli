@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="title-07">
+  <title id="title-07">Cinecli Logo - The Swarm Helm</title>
+  <rect width="256" height="256" rx="44" fill="#070D18"/>
+
+  <defs>
+    <!-- Single Helm Handle & Spoke extending upward from center -->
+    <g id="spoke-handle">
+      <!-- Radial spoke bar -->
+      <rect x="-5" y="-104" width="10" height="74" rx="5" fill="#E2E8F0"/>
+      <!-- Outer Pirate Peg Knob / Swarm Node -->
+      <circle cx="0" cy="-108" r="9" fill="#06B6D4"/>
+    </g>
+    <!-- Single film reel aperture hole -->
+    <circle id="spool-hole" cx="0" cy="-66" r="6" fill="#070D18"/>
+  </defs>
+
+  <!-- 8 Radial Spokes & Swarm Handles -->
+  <g transform="translate(128, 128)">
+    <use href="#spoke-handle" transform="rotate(0)"/>
+    <use href="#spoke-handle" transform="rotate(45)"/>
+    <use href="#spoke-handle" transform="rotate(90)"/>
+    <use href="#spoke-handle" transform="rotate(135)"/>
+    <use href="#spoke-handle" transform="rotate(180)"/>
+    <use href="#spoke-handle" transform="rotate(225)"/>
+    <use href="#spoke-handle" transform="rotate(270)"/>
+    <use href="#spoke-handle" transform="rotate(315)"/>
+  </g>
+
+  <!-- Ship's Wheel / Film Reel Outer Rim -->
+  <path fill-rule="evenodd" d="
+    M 128 50
+    A 78 78 0 1 1 127.9 50 Z
+    M 128 62
+    A 66 66 0 1 0 128.1 62 Z
+  " fill="#E2E8F0"/>
+
+  <path fill-rule="evenodd" d="
+    M 128 64
+    A 64 64 0 1 1 127.9 64 Z
+    M 128 76
+    A 52 52 0 1 0 128.1 76 Z
+  " fill="#0F172A"/>
+
+  <!-- Reel Sprockets along the Rim -->
+  <g transform="translate(128, 128)">
+    <use href="#spool-hole" transform="rotate(22.5)"/>
+    <use href="#spool-hole" transform="rotate(67.5)"/>
+    <use href="#spool-hole" transform="rotate(112.5)"/>
+    <use href="#spool-hole" transform="rotate(157.5)"/>
+    <use href="#spool-hole" transform="rotate(202.5)"/>
+    <use href="#spool-hole" transform="rotate(247.5)"/>
+    <use href="#spool-hole" transform="rotate(292.5)"/>
+    <use href="#spool-hole" transform="rotate(337.5)"/>
+  </g>
+
+  <!-- Central Hub (Brass Plate + Play Core) -->
+  <circle cx="128" cy="128" r="38" fill="#E2E8F0"/>
+  <circle cx="128" cy="128" r="32" fill="#070D18"/>
+
+  <!-- Rightward Play Button at Wheel Center -->
+  <polygon points="120 110, 144 128, 120 146" fill="#06B6D4"/>
+</svg>

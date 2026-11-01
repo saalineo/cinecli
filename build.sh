@@ -62,8 +62,15 @@ else
         || echo "WARNING: failed to install libtorrent (streaming/downloading will not work)"
 fi
 
-pip3 install --user --break-system-packages beautifulsoup4 cloudscraper feedparser rich pyyaml 2>/dev/null \
-    || pip3 install --user beautifulsoup4 cloudscraper feedparser rich pyyaml 2>/dev/null
+pip3 install --user --break-system-packages -r requirements.txt 2>/dev/null \
+    || pip3 install --user -r requirements.txt
+
+# Do not claim success if the one dependency required for transfer is absent.
+if ! python3 -c "import libtorrent" 2>/dev/null; then
+    echo "ERROR: libtorrent is unavailable; search may work, but streaming and downloading will not." >&2
+    echo "Run ./cinecli --doctor after installing a libtorrent package for your platform." >&2
+    exit 1
+fi
 
 echo ""
 echo "build complete!"

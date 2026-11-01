@@ -1,8 +1,10 @@
 import http.server
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -20,7 +22,7 @@ MIME = {
     "m4v": "video/x-m4v",
 }
 
-VIDEO_RE = re.compile(r"\.(mp4|mkv|webm|avi|mov|m4v)$", re.I)
+VIDEO_RE = re.compile(r"\.(mp4|mkv|webm|avi|mov|m4v|mpeg|mpg|ts|wmv)$", re.I)
 
 
 class _RangeHandler(http.server.BaseHTTPRequestHandler):
@@ -191,20 +193,36 @@ def stream(
     timeout=60,
     proxy=None,
     sub_lang=None,
+    cache_dir=None,
 ):
+    # Normal streaming uses an isolated temporary cache and removes it when the
+    # player exits.  Supplying --outdir is an explicit request to keep files.
+    temporary_cache = outdir is None
+    if temporary_cache:
+        base_cache = os.path.expanduser(cache_dir or "~/.cache/cinecli/streams")
+        os.makedirs(base_cache, exist_ok=True)
+        save_path = tempfile.mkdtemp(prefix="stream-", dir=base_cache)
+    else:
+        save_path = save_path_for(outdir)
+
     tc = TorrentClient(trackers=trackers, timeout=timeout, proxy=proxy)
-    save_path = save_path_for(outdir or "/tmp")
+
+    def fail(message):
+        sys.stderr.write(message)
+        tc.stop()
+        if temporary_cache:
+            shutil.rmtree(save_path, ignore_errors=True)
+        return 1
+
     sys.stderr.write("  connecting to swarm...\n")
     tc.add_magnet(magnet, save_path)
     if not tc.wait_metadata(timeout=timeout):
-        sys.stderr.write("\r  failed to fetch metadata; torrent may be dead (0 seeders)\n")
-        return 1
+        return fail("\r  failed to fetch metadata; torrent may be dead (0 seeders)\n")
 
     files = tc.files()
     picked = pick_video(files)
     if not picked:
-        sys.stderr.write("\r  no video file found in torrent\n")
-        return 1
+        return fail("\r  no supported video file found in torrent\n")
     idx, name, size = picked
     tc.file_idx = idx
     tc.file_name = name
@@ -297,6 +315,8 @@ def stream(
         stop.set()
         server.stop()
         tc.stop()
+        if temporary_cache:
+            shutil.rmtree(save_path, ignore_errors=True)
     if ret == 0:
         sys.stderr.write("\r  done\n")
     return ret

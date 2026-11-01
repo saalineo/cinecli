@@ -1,4 +1,5 @@
-import concurrent.futures
+import multiprocessing
+import queue
 import re
 import sys
 import time
@@ -42,9 +43,9 @@ def split_query_year(query):
 
 
 def enabled_sources(cfg, mode, lang):
-    src = cfg.get("sources") or {}
-    if lang == "japanese":
-        src["nyaa"] = True
+    # Do not mutate configuration or re-enable sources a user deliberately
+    # disabled.  Language affects the query and ranking, never consent.
+    src = dict(cfg.get("sources") or {})
     order = list(PROVIDER_ORDER)
     if mode == "movie":
         order.remove("eztv")
@@ -69,6 +70,18 @@ def _run_provider(module_name, query, mode, lang, quality, net):
         return module_name, []
 
 
+def _provider_worker(result_queue, module_name, query, mode, lang, quality, net):
+    """Run one untrusted/brittle provider in an isolated process.
+
+    A thread cannot be safely cancelled while blocked in a network operation;
+    a process can. Provider failures are already converted to an empty result.
+    """
+    try:
+        result_queue.put(_run_provider(module_name, query, mode, lang, quality, net))
+    except Exception:
+        result_queue.put((module_name, []))
+
+
 def search(query, mode="movie", lang=None, quality=None, max_results=50, cfg=None, net=None):
     cfg = cfg or load_config()
     lang = canonical_lang(lang) if lang else None
@@ -83,10 +96,10 @@ def search(query, mode="movie", lang=None, quality=None, max_results=50, cfg=Non
     provider_query = base_query
     if lang and lang != "english":
         provider_query = f"{base_query} {lang}"
-    request_timeout = min(int(cfg.get("timeout", 30)), 8)
+    request_timeout = max(1, min(int(cfg.get("timeout", 30)), 8))
     net = net or Net(
         timeout=request_timeout,
-        proxy=cfg.get("proxy"),
+        proxy=cfg.get("http_proxy") or cfg.get("proxy"),
         use_doh=cfg.get("use_doh", True),
     )
 
@@ -94,24 +107,48 @@ def search(query, mode="movie", lang=None, quality=None, max_results=50, cfg=Non
     results = []
     status = {}
     dropped = 0
-    deadline = time.monotonic() + SEARCH_BUDGET
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(4, len(sources)))
+    budget = max(1.0, float(cfg.get("search_budget", SEARCH_BUDGET)))
+    # cinecli supports POSIX platforms. ``fork`` lets the child inherit the
+    # prepared network object and, importantly, lets the parent terminate a
+    # provider that ignores a timeout or hangs in a third-party scraper.
+    context = multiprocessing.get_context("fork")
+    result_queue = context.Queue()
+    workers = []
     try:
-        futures = {
-            executor.submit(_run_provider, name, provider_query, mode, lang, quality, net): name
-            for name in sources
-        }
-        for future in concurrent.futures.as_completed(futures):
-            if time.monotonic() > deadline:
-                dropped += 1
+        for name in sources:
+            worker = context.Process(
+                target=_provider_worker,
+                args=(result_queue, name, provider_query, mode, lang, quality, net),
+                daemon=True,
+            )
+            worker.start()
+            workers.append(worker)
+
+        pending = set(sources)
+        deadline = time.monotonic() + budget
+        while pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                name, res = result_queue.get(timeout=remaining)
+            except queue.Empty:
+                break
+            if name not in pending:
                 continue
-            name, res = future.result()
+            pending.remove(name)
             results.extend(res)
             status[name] = len(res)
+        dropped = len(pending)
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        for worker in workers:
+            if worker.is_alive():
+                worker.terminate()
+            worker.join(timeout=1)
+        result_queue.close()
+        result_queue.join_thread()
     if dropped:
-        sys.stderr.write(f"  {dropped} slow source(s) skipped after {int(SEARCH_BUDGET)}s\n")
+        sys.stderr.write(f"  {dropped} slow source(s) skipped after {int(budget)}s\n")
 
     fallback = False
     if query_year:
@@ -138,7 +175,10 @@ def search(query, mode="movie", lang=None, quality=None, max_results=50, cfg=Non
             if preferred:
                 results = preferred
 
-    if max_results:
+    if max_results is not None:
+        max_results = int(max_results)
+        if max_results <= 0:
+            raise ValueError("max_results must be a positive integer")
         results = results[:max_results]
 
     return results, status, fallback

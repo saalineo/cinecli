@@ -1,6 +1,7 @@
 import os
 import socket
 import time
+import urllib.parse
 
 try:
     import libtorrent as lt
@@ -32,12 +33,19 @@ _ALERT_NAMES = ["error_notification", "tracker_notification"]
 def _apply_proxy(settings, proxy):
     if not proxy:
         return
-    pp = proxy.split("://")[-1]
+    parsed = urllib.parse.urlsplit(proxy if "://" in proxy else "socks5://" + proxy)
+    if parsed.scheme.lower() not in ("socks5", "socks5h"):
+        raise RuntimeError(
+            "torrent_proxy must use socks5:// (HTTP proxies cannot carry BitTorrent peer traffic)"
+        )
     user = pw = ""
-    if "@" in pp:
-        creds, pp = pp.rsplit("@", 1)
-        user, _, pw = creds.partition(":")
-    host, _, port = pp.partition(":")
+    if parsed.username:
+        user = urllib.parse.unquote(parsed.username)
+        pw = urllib.parse.unquote(parsed.password or "")
+    host = parsed.hostname or ""
+    port = parsed.port
+    if not host:
+        raise RuntimeError("torrent_proxy is missing a host")
     settings["proxy_hostname"] = host
     settings["proxy_port"] = int(port or 1080)
     settings["proxy_type"] = (

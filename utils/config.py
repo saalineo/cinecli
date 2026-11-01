@@ -18,9 +18,15 @@ DEFAULTS = {
     "download_dir": "~/Downloads",
     "max_results": 50,
     "timeout": 30,
+    "search_budget": 20,
+    "download_stall_timeout": 180,
     "vpn_required": False,
     "dns_check": False,
     "use_doh": True,
+    # Web searches use HTTP CONNECT; libtorrent uses SOCKS5. Keep the two
+    # transports separate so a proxy setting cannot create false privacy.
+    "http_proxy": None,
+    "torrent_proxy": None,
     "proxy": None,
     "player": "mpv",
     "mpv_args": [
@@ -28,7 +34,10 @@ DEFAULTS = {
         "--cache=yes",
         "--demuxer-max-bytes=150M",
     ],
-    "auto_sync_trackers": True,
+    # Fetching a remote tracker list contacts a third party.  Keep this opt-in;
+    # the bundled static list is sufficient for normal operation.
+    "auto_sync_trackers": False,
+    "stream_cache_dir": "~/.cache/cinecli/streams",
     "trackers": [
         "udp://tracker.opentrackr.org:1337/announce",
         "udp://open.stealth.si:80/announce",

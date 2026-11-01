@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -16,14 +17,18 @@ def cmd_search(args):
     from search.searcher import search
 
     cfg = load_config()
-    results, status, fallback = search(
-        args.query,
-        mode=args.mode,
-        lang=args.lang,
-        quality=args.quality,
-        max_results=args.max_results,
-        cfg=cfg,
-    )
+    try:
+        results, status, fallback = search(
+            args.query,
+            mode=args.mode,
+            lang=args.lang,
+            quality=args.quality,
+            max_results=args.max_results,
+            cfg=cfg,
+        )
+    except ValueError as exc:
+        sys.stderr.write(f"  invalid search option: {exc}\n")
+        return 2
     for name, count in status.items():
         sys.stderr.write(f"  {name}: {count} results\n")
     if fallback:
@@ -73,8 +78,34 @@ def cmd_safety(args):
     return 0
 
 
+def cmd_doctor(args):
+    """Machine-readable preflight information for support and troubleshooting."""
+    from stream.torrent_client import LIBTORRENT_OK
+
+    cfg = load_config()
+    generic_proxy = cfg_get(cfg, "proxy")
+    report = {
+        "python": sys.version.split()[0],
+        "libtorrent": LIBTORRENT_OK,
+        "fzf": bool(shutil.which("fzf")),
+        "mpv": bool(shutil.which("mpv")),
+        "vlc": bool(shutil.which("vlc")),
+        "http_proxy_configured": bool(cfg_get(cfg, "http_proxy")),
+        "torrent_proxy_configured": bool(cfg_get(cfg, "torrent_proxy")),
+        "legacy_proxy_configured": bool(generic_proxy),
+        "auto_sync_trackers": bool(cfg_get(cfg, "auto_sync_trackers", False)),
+    }
+    report["ready_for_search"] = report["fzf"]
+    report["ready_for_download"] = report["ready_for_search"] and report["libtorrent"]
+    report["ready_for_stream"] = report["ready_for_download"] and (report["mpv"] or report["vlc"])
+    if generic_proxy and not (report["http_proxy_configured"] or report["torrent_proxy_configured"]):
+        report["warning"] = "legacy proxy is ambiguous; use http_proxy and/or torrent_proxy"
+    print(json.dumps(report, sort_keys=True))
+    return 0 if report["ready_for_download"] else 1
+
+
 def _resolve_trackers(cfg):
-    if cfg.get("auto_sync_trackers", True):
+    if cfg.get("auto_sync_trackers", False):
         try:
             from utils.trackers import get_live_trackers
             return get_live_trackers(fallback=cfg.get("trackers"))
@@ -99,18 +130,23 @@ def cmd_stream(args):
     magnet = _build_magnet(args, cfg, trackers=trackers)
     player = args.player or cfg_get(cfg, "player", "mpv")
     player_args = cfg_get(cfg, "mpv_args", [])
-    proxy = cfg_get(cfg, "proxy")
-    return stream(
-        magnet,
-        title=args.title or "",
-        outdir=args.outdir,
-        player=player,
-        player_args=player_args,
-        trackers=trackers,
-        timeout=cfg_get(cfg, "timeout", 30),
-        proxy=proxy,
-        sub_lang=args.sub,
-    )
+    proxy = cfg_get(cfg, "torrent_proxy") or cfg_get(cfg, "proxy")
+    try:
+        return stream(
+            magnet,
+            title=args.title or "",
+            outdir=args.outdir,
+            player=player,
+            player_args=player_args,
+            trackers=trackers,
+            timeout=cfg_get(cfg, "timeout", 30),
+            proxy=proxy,
+            sub_lang=args.sub,
+            cache_dir=resolve_dir(cfg, "stream_cache_dir"),
+        )
+    except RuntimeError as exc:
+        sys.stderr.write(f"  stream failed: {exc}\n")
+        return 1
 
 
 def cmd_download(args):
@@ -119,16 +155,21 @@ def cmd_download(args):
     cfg = load_config()
     trackers = _resolve_trackers(cfg)
     magnet = _build_magnet(args, cfg, trackers=trackers)
-    proxy = cfg_get(cfg, "proxy")
-    return download(
-        magnet,
-        outdir=args.outdir or resolve_dir(cfg),
-        title=args.title or "",
-        trackers=trackers,
-        timeout=cfg_get(cfg, "timeout", 30),
-        all_files=args.all_files,
-        proxy=proxy,
-    )
+    proxy = cfg_get(cfg, "torrent_proxy") or cfg_get(cfg, "proxy")
+    try:
+        return download(
+            magnet,
+            outdir=args.outdir or resolve_dir(cfg),
+            title=args.title or "",
+            trackers=trackers,
+            timeout=cfg_get(cfg, "timeout", 30),
+            all_files=args.all_files,
+            proxy=proxy,
+            stall_timeout=cfg_get(cfg, "download_stall_timeout", 180),
+        )
+    except RuntimeError as exc:
+        sys.stderr.write(f"  download failed: {exc}\n")
+        return 1
 
 
 def main(argv=None):
@@ -146,6 +187,7 @@ def main(argv=None):
     p_config.add_argument("key", nargs="?", default=None)
 
     p_safety = sub.add_parser("safety", help="VPN / DNS-leak checks (json)")
+    sub.add_parser("doctor", help="report dependency and configuration readiness (json)")
 
     p_stream = sub.add_parser("stream", help="stream a torrent via mpv/vlc")
     p_stream.add_argument("--magnet", default=None)
@@ -176,6 +218,8 @@ def main(argv=None):
         return cmd_config(args)
     if args.command == "safety":
         return cmd_safety(args)
+    if args.command == "doctor":
+        return cmd_doctor(args)
     if args.command == "stream":
         return cmd_stream(args)
     if args.command == "download":

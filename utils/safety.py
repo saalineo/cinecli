@@ -21,29 +21,18 @@ def vpn_interfaces():
 def check_vpn():
     ifaces = vpn_interfaces()
     if ifaces:
-        return True, "vpn interface: " + ", ".join(ifaces)
-    return False, "no vpn interface detected"
-
-
-def _public_ip(doh):
-    if doh:
-        from utils.network import Net
-
-        net = Net(timeout=12, use_doh=True)
-        return net.get("https://api.ipify.org", source="dnscheck")
-    import urllib.request
-
-    try:
-        return urllib.request.urlopen("https://api.ipify.org", timeout=8).read().decode()
-    except Exception:
-        return None
+        return True, "VPN-like interface detected: " + ", ".join(ifaces)
+    return False, "no VPN-like network interface detected"
 
 
 def dns_leak_check():
-    local = _public_ip(False)
-    doh = _public_ip(True)
-    if local and doh:
-        return local != doh, {"system_dns_ip": local, "doh_ip": doh}
-    if local and not doh:
-        return None, {"system_dns_ip": local, "doh_ip": None}
-    return None, {"system_dns_ip": None, "doh_ip": None}
+    """Report an honest limitation instead of a false DNS-leak verdict.
+
+    Comparing a web server's observed public IP after two DNS resolution methods
+    cannot establish whether DNS requests leaked. A real test needs a controlled
+    authoritative DNS endpoint and must not be represented as a local check.
+    """
+    return None, {
+        "status": "not_verified",
+        "detail": "DNS leak verification is unavailable locally; use your VPN provider or a controlled DNS-leak test.",
+    }

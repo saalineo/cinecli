@@ -1,0 +1,5 @@
+beautifulsoup4==4.15.0
+cloudscraper==1.2.71
+feedparser==6.0.12
+PyYAML==6.0.3
+rich==14.3.3

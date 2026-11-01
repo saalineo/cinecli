@@ -124,9 +124,17 @@ class DohResolver:
 
 class Net:
     def __init__(self, timeout=30, proxy=None, use_doh=True, rate_per_minute=30):
+        if proxy:
+            scheme = urllib.parse.urlsplit(proxy).scheme.lower()
+            if scheme not in ("http", ""):
+                raise ValueError(
+                    "web search supports only an http:// proxy; configure torrent_proxy separately for SOCKS5"
+                )
         self.timeout = timeout
         self.proxy = proxy
-        self.use_doh = use_doh
+        # A direct DoH lookup would disclose every target hostname outside an
+        # HTTP proxy. Let the proxy resolve names instead.
+        self.use_doh = bool(use_doh and not proxy)
         self.doh = DohResolver()
         self._cookies = {}
         self.limiter = RateLimiter(rate_per_minute, 60)
