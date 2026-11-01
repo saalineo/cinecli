@@ -27,6 +27,57 @@ ok()   { echo -e " ${G}$1${N}"; }
 warn() { echo -e " ${Y}$1${N}" >&2; }
 fail() { echo -e " ${R}$1${N}" >&2; }
 
+render_search_progress() {
+  local query="$1" mode="$2" line payload source state count
+  local tty="/dev/stderr" interactive=0 started completed=0
+  local clean_query
+  clean_query=$(printf '%s' "$query" | tr -d '\000-\037\177')
+  [[ -t 2 ]] && interactive=1
+  declare -A source_state source_count
+
+  draw() {
+    [[ $interactive == 1 ]] || return
+    local elapsed=$((SECONDS - started)) name display_count
+    printf '\033[?25l\033[H\033[2J' > "$tty"
+    printf '\033[1;38;5;81m  CINECLI\033[0m  \033[38;5;245mDISCOVERY\033[0m\n\n' > "$tty"
+    printf '  \033[1m%s\033[0m  \033[38;5;245m· %s search · %ss elapsed\033[0m\n' "$clean_query" "$mode" "$elapsed" > "$tty"
+    printf '  \033[38;5;245mSearching public indexes and collecting release metadata.\033[0m\n\n' > "$tty"
+    printf '  \033[38;5;245mSOURCE                 STATUS                     RESULTS\033[0m\n' > "$tty"
+    printf '  \033[38;5;240m─────────────────────────────────────────────────────────\033[0m\n' > "$tty"
+    for name in yts eztv tpb x1337 solid galaxy nyaa lime dht; do
+      [[ -z "${source_state[$name]:-}" ]] && continue
+      display_count="${source_count[$name]:-—}"
+      case "${source_state[$name]}" in
+        searching) printf '  \033[38;5;111m%-22s\033[0m \033[38;5;220m%-26s\033[0m %s\n' "$name" "searching…" "$display_count" > "$tty" ;;
+        complete)  printf '  \033[38;5;111m%-22s\033[0m \033[38;5;114m%-26s\033[0m %s\n' "$name" "complete" "$display_count" > "$tty" ;;
+        *)         printf '  \033[38;5;111m%-22s\033[0m \033[38;5;203m%-26s\033[0m %s\n' "$name" "${source_state[$name]}" "$display_count" > "$tty" ;;
+      esac
+    done
+    printf '\n  \033[38;5;245m%d source(s) completed · Ctrl-C cancels safely\033[0m\n' "$completed" > "$tty"
+  }
+
+  started=$SECONDS
+  draw
+  while IFS= read -r line; do
+    if [[ "$line" == @@cinecli-progress@@* ]]; then
+      payload=${line#@@cinecli-progress@@}
+      IFS='|' read -r source state count <<< "$payload"
+      source_state["$source"]="$state"
+      source_count["$source"]="$count"
+      [[ "$state" == "complete" || "$state" == "timed out" ]] && ((completed+=1))
+      draw
+    elif [[ $interactive == 1 ]]; then
+      # Keep non-protocol diagnostics visible beneath the live surface.
+      printf '\033[38;5;245m  %s\033[0m\n' "$line" > "$tty"
+    else
+      printf '  %s\n' "$line" >&2
+    fi
+  done
+  if [[ $interactive == 1 ]]; then
+    printf '\033[?25h\n' > "$tty"
+  fi
+}
+
 usage() {
   cat <<EOF
 usage: cinecli [options] <movie or tv name>
@@ -189,8 +240,8 @@ main() {
   [[ -n "$max" ]] && search_args+=(--max-results "$max")
   search_args+=("$query")
 
-  if "$py" "$main_py" "${search_args[@]}" > "$cache" \
-     2> >(while IFS= read -r line; do printf '  %s\n' "$line"; done >&2); then
+  if CINECLI_TUI=1 "$py" "$main_py" "${search_args[@]}" > "$cache" \
+     2> >(render_search_progress "$query" "$mode"); then
     rc=0
   else
     rc=$?

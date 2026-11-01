@@ -54,6 +54,18 @@ class SearchReliabilityTests(unittest.TestCase):
         self.assertEqual({}, status)
         self.assertLess(time.monotonic() - started, 1.5)
 
+    def test_search_reports_provider_lifecycle_to_the_tui(self):
+        events = []
+        with patch("search.searcher._run_provider", return_value=("yts", self.results)):
+            search(
+                "x",
+                max_results=1,
+                cfg=self.cfg,
+                progress=lambda source, state, count: events.append((source, state, count)),
+            )
+        self.assertIn(("yts", "searching", None), events)
+        self.assertIn(("yts", "complete", 3), events)
+
 
 if __name__ == "__main__":
     unittest.main()

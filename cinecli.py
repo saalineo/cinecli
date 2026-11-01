@@ -17,6 +17,16 @@ def cmd_search(args):
     from search.searcher import search
 
     cfg = load_config()
+
+    def progress(source, state, count=None):
+        if os.environ.get("CINECLI_TUI") != "1":
+            return
+        # This deliberately simple framing is parsed by the shell UI. Provider
+        # identifiers are internal constants, so the protocol is safe to split.
+        suffix = "" if count is None else str(count)
+        sys.stderr.write(f"@@cinecli-progress@@{source}|{state}|{suffix}\n")
+        sys.stderr.flush()
+
     try:
         results, status, fallback = search(
             args.query,
@@ -25,6 +35,7 @@ def cmd_search(args):
             quality=args.quality,
             max_results=args.max_results,
             cfg=cfg,
+            progress=progress,
         )
     except ValueError as exc:
         sys.stderr.write(f"  invalid search option: {exc}\n")

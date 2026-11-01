@@ -82,7 +82,7 @@ def _provider_worker(result_queue, module_name, query, mode, lang, quality, net)
         result_queue.put((module_name, []))
 
 
-def search(query, mode="movie", lang=None, quality=None, max_results=50, cfg=None, net=None):
+def search(query, mode="movie", lang=None, quality=None, max_results=50, cfg=None, net=None, progress=None):
     cfg = cfg or load_config()
     lang = canonical_lang(lang) if lang else None
     if quality:
@@ -114,6 +114,14 @@ def search(query, mode="movie", lang=None, quality=None, max_results=50, cfg=Non
     context = multiprocessing.get_context("fork")
     result_queue = context.Queue()
     workers = []
+
+    def emit(source, state, count=None):
+        if progress:
+            try:
+                progress(source, state, count)
+            except Exception:
+                pass
+
     try:
         for name in sources:
             worker = context.Process(
@@ -123,6 +131,7 @@ def search(query, mode="movie", lang=None, quality=None, max_results=50, cfg=Non
             )
             worker.start()
             workers.append(worker)
+            emit(name, "searching")
 
         pending = set(sources)
         deadline = time.monotonic() + budget
@@ -139,7 +148,10 @@ def search(query, mode="movie", lang=None, quality=None, max_results=50, cfg=Non
             pending.remove(name)
             results.extend(res)
             status[name] = len(res)
+            emit(name, "complete", len(res))
         dropped = len(pending)
+        for name in pending:
+            emit(name, "timed out")
     finally:
         for worker in workers:
             if worker.is_alive():

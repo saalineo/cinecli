@@ -67,6 +67,11 @@ options:
 
 First run will search, then `fzf` lets you pick a title and a quality. It streams (or downloads) automatically.
 
+During an interactive search, cinecli opens a live discovery view showing the
+query, elapsed time, each source's current state, and the number of results
+returned. It automatically falls back to plain diagnostic lines when output is
+redirected, so scripting remains reliable.
+
 For normal use, these are the only commands needed:
 
 ```bash
